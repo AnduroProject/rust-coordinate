@@ -1,20 +1,8 @@
 <div align="center">
-  <h1>Rust Bitcoin</h1>
-
-  <img alt="Rust Bitcoin logo by Hunter Trujillo, see license and source files under /logo" src="./logo/rust-bitcoin.png" width="300" />
+  <h1>Rust Coordinate</h1>
 
   <p>Library with support for de/serialization, parsing and executing on data-structures
-    and network messages related to Bitcoin.
-  </p>
-
-  <p>
-    <a href="https://crates.io/crates/bitcoin"><img alt="Crate Info" src="https://img.shields.io/crates/v/bitcoin.svg"/></a>
-    <a href="https://github.com/rust-bitcoin/rust-bitcoin/blob/master/LICENSE"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
-    <a href="https://github.com/rust-bitcoin/rust-bitcoin/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/rust-bitcoin/rust-bitcoin/workflows/Continuous%20integration/badge.svg"></a>
-    <a href="https://docs.rs/bitcoin"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-bitcoin-green"/></a>
-    <a href="https://blog.rust-lang.org/2020/02/27/Rust-1.48.0.html"><img alt="Rustc Version 1.48.0+" src="https://img.shields.io/badge/rustc-1.48.0%2B-lightgrey.svg"/></a>
-    <a href="https://gnusha.org/bitcoin-rust/"><img alt="Chat on IRC" src="https://img.shields.io/badge/irc-%23bitcoin--rust%20on%20libera.chat-blue"></a>
-    <a href="https://github.com/model-checking/kani"><imp alt="kani" src="https://github.com/rust-bitcoin/rust-bitcoin/actions/workflows/kani.yaml/badge.svg"></a>
+    and network messages related to Coordinate.
   </p>
 </div>
 
@@ -27,9 +15,6 @@ Supports (or should support)
 * Script de/serialization
 * Private keys and address creation, de/serialization and validation (including full BIP32 support)
 * PSBT v0 de/serialization and all but the Input Finalizer role. Use [rust-miniscript](https://docs.rs/miniscript/latest/miniscript/psbt/index.html) to finalize.
-
-For JSONRPC interaction with Bitcoin Core, it is recommended to use
-[rust-bitcoincore-rpc](https://github.com/rust-bitcoin/rust-bitcoincore-rpc).
 
 It is recommended to always use [cargo-crev](https://github.com/crev-dev/cargo-crev) to verify the
 trustworthiness of each of your dependencies, including this one.
@@ -57,15 +42,6 @@ please let us know, so we can know how large the interest is and possibly decide
 Currently can be found on [docs.rs/bitcoin](https://docs.rs/bitcoin/). Patches to add usage examples
 and to expand on existing docs would be extremely appreciated.
 
-## Contributing
-
-Contributions are generally welcome. If you intend to make larger changes please discuss them in an
-issue before PRing them to avoid duplicate work and architectural mismatches. If you have any
-questions or ideas you want to discuss please join us in
-[#bitcoin-rust](https://web.libera.chat/?channel=#bitcoin-rust) on
-[libera.chat](https://libera.chat).
-
-For more information please see `./CONTRIBUTING.md`.
 
 ## Minimum Supported Rust Version (MSRV)
 
@@ -73,19 +49,6 @@ This library should always compile with any combination of features on **Rust 1.
 
 To build with the MSRV you will likely need to pin a bunch of dependencies, see `./contrib/test.sh`
 for the current list.
-
-## External dependencies
-
-We integrate with a few external libraries, most notably `serde`. These
-are available via feature flags. To ensure compatibility and MSRV stability we
-provide two lock files as a means of inspecting compatible versions:
-`Cargo-minimal.lock` containing minimal versions of dependencies and
-`Cargo-recent.lock` containing recent versions of dependencies tested in our CI.
-
-We do not provide any guarantees about the content of these lock files outside
-of "our CI didn't fail with these versions". Specifically, we do not guarantee
-that the committed hashes are free from malware. It is your responsibility to
-review them.
 
 ## Installing Rust
 
@@ -195,23 +158,6 @@ git config --local core.hooksPath githooks/
 
 Alternatively add symlinks in your `.git/hooks` directory to any of the githooks we provide.
 
-## Policy on Altcoins/Altchains
-
-Since the altcoin landscape includes projects which [frequently appear and disappear, and are poorly
-designed anyway](https://download.wpsoftware.net/bitcoin/alts.pdf) we do not support any altcoins.
-Supporting Bitcoin properly is already difficult enough and we do not want to increase the
-maintenance burden and decrease API stability by adding support for other coins.
-
-Our code is public domain so by all means fork it and go wild :)
-
-
-## Release Notes
-
-Release notes are done per crate, see:
-
-- [bitcoin CHANGELOG](bitcoin/CHANGELOG.md)
-- [hashes CHANGELOG](hashes/CHANGELOG.md)
-- [internals CHANGELOG](internals/CHANGELOG.md)
 
 
 ## Licensing
