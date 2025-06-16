@@ -625,13 +625,13 @@ pub struct Transaction {
     /// Asset Precision
     pub precision: i32,
     /// Asset Symbol 
-    pub ticker: String,
+    pub ticker: Vec<u8>,
     /// Asset name 
-    pub headline: String,
+    pub headline: Vec<u8>,
     /// Asset hash for data 
     pub payload: Txid,
     /// Asset name 
-    pub payloaddata: String,
+    pub payloaddata: Vec<u8>,
     /// Block height or timestamp. Transaction cannot be included in a block until this height/time.
     ///
     /// ### Relevant BIPs
@@ -672,10 +672,10 @@ impl Transaction {
             version: self.version,
             assettype: self.assettype,
             precision: self.precision,
-            ticker: self.ticker.to_string(),
-            headline: self.headline.to_string(),
+            ticker: self.ticker.clone(),
+            headline: self.headline.clone(),
             payload: self.payload,
-            payloaddata: "".to_string(),
+            payloaddata: vec![],
             lock_time: self.lock_time,
             input: self
                 .input
@@ -723,7 +723,9 @@ impl Transaction {
     /// this will be equal to [`Transaction::txid()`].
     pub fn wtxid(&self) -> Wtxid {
         let mut enc = Wtxid::engine();
-        self.consensus_encode(&mut enc).expect("engines don't error");
+        let mut tx_details = self.clone();
+        tx_details.payloaddata = "".to_string().as_bytes().to_vec();
+        tx_details.consensus_encode(&mut enc).expect("engines don't error");
         Wtxid::from_engine(enc)
     }
 
@@ -1092,7 +1094,15 @@ impl Encodable for Transaction {
     fn consensus_encode<W: io::Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
-
+        if self.version.0 == 10 {
+            len += self.assettype.consensus_encode(w)?;
+            len += self.precision.consensus_encode(w)?;
+            len += self.ticker.consensus_encode(w)?;
+            len += self.headline.consensus_encode(w)?;
+            len += self.payload.consensus_encode(w)?;
+            len += self.payloaddata.consensus_encode(w)?;
+        }
+        
         // Legacy transaction serialization format only includes inputs and outputs.
         if !self.use_segwit_serialization() {
             len += self.input.consensus_encode(w)?;
@@ -1119,17 +1129,17 @@ impl Decodable for Transaction {
         let version = Version::consensus_decode_from_finite_reader(r)?;
         let mut assettype = 0;
         let mut precision = 0;
-        let mut ticker = "".to_string();
-        let mut headline = "".to_string();
+        let mut ticker = vec![];
+        let mut headline = vec![];
         let mut payload = Txid::all_zeros();
-        let mut payloaddata = "".to_string();
+        let mut payloaddata = vec![];
         if version.0 == 10 {
            assettype = i32::consensus_decode_from_finite_reader(r)?;
            precision = i32::consensus_decode_from_finite_reader(r)?;
-           ticker = String::consensus_decode_from_finite_reader(r)?;
-           headline = String::consensus_decode_from_finite_reader(r)?;
+           ticker = Vec::<u8>::consensus_decode_from_finite_reader(r)?;
+           headline = Vec::<u8>::consensus_decode_from_finite_reader(r)?;
            payload = Txid::consensus_decode_from_finite_reader(r)?;
-           payloaddata = String::consensus_decode_from_finite_reader(r)?;
+           payloaddata = Vec::<u8>::consensus_decode_from_finite_reader(r)?;
         }
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
@@ -2032,10 +2042,10 @@ mod tests {
             version: Version::TWO,
             assettype: 0,
             precision: 0,
-            headline: "".to_string(),
-            ticker: "".to_string(),
+            headline: vec![],
+            ticker: vec![],
             payload: Txid::all_zeros(),
-            payloaddata: "".to_string(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::ZERO,
             input: vec![],
             output: vec![],

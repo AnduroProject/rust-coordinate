@@ -135,7 +135,7 @@ pub use crate::{
     address::{Address, AddressType},
     amount::{Amount, Denomination, SignedAmount},
     bip32::XKeyIdentifier,
-    blockdata::block::{self, Block},
+    blockdata::block::{self, Block, SignedBlock},
     blockdata::constants,
     blockdata::fee_rate::FeeRate,
     blockdata::locktime::{self, absolute, relative},

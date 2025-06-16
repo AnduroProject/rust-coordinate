@@ -19,7 +19,7 @@ use crate::consensus::{encode, Decodable, Encodable};
 use crate::hash_types::{TxMerkleNode, WitnessCommitment, WitnessMerkleNode, Wtxid};
 use crate::internal_macros::impl_consensus_encoding;
 use crate::pow::{CompactTarget, Target, Work};
-use crate::prelude::*;
+use crate::{prelude::*, Txid};
 use crate::{io, merkle_tree, Network, VarInt};
 
 #[rustfmt::skip]                // Keep public re-exports separate.
@@ -112,6 +112,154 @@ impl fmt::Debug for Header {
             .field("nonce", &self.nonce)
             .finish()
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+pub struct MerkleBranch {
+    // pub branch_length: VarInt,
+    /// Individual hash in the branch
+    pub branch_hash: Vec<TxMerkleNode>,
+    /// Bitmask of which side of the merkle hash function the branch_hash element should go on.
+    /// Zero means it goes on the right, One means on the left. It is equal to the index of the
+    /// starting hash within the widest level of the merkle tree for this merkle branch.
+    pub branch_side_mask: u32,
+}
+
+impl Encodable for MerkleBranch {
+    fn consensus_encode<W: std::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
+        let mut len = 0;
+        len += VarInt(self.branch_hash.len() as u64).consensus_encode(writer)?;
+        for hash in self.branch_hash.iter() {
+            len += hash.consensus_encode(writer)?;
+        }
+        len += self.branch_side_mask.consensus_encode(writer)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for MerkleBranch {
+    fn consensus_decode_from_finite_reader<R: std::io::Read + ?Sized>(
+        reader: &mut R,
+    ) -> Result<Self, encode::Error> {
+        Ok(Self {
+            branch_hash: Decodable::consensus_decode_from_finite_reader(reader)?,
+            branch_side_mask: Decodable::consensus_decode_from_finite_reader(reader)?,
+        })
+    }
+}
+
+impl MerkleBranch {
+    /// Helper method to produce SHA256D(left + right)
+    fn parent_hash(left: &TxMerkleNode, right: &TxMerkleNode) -> TxMerkleNode {
+        let mut encoder = TxMerkleNode::engine();
+        left.consensus_encode(&mut encoder)
+            .expect("engines don't error");
+        right
+            .consensus_encode(&mut encoder)
+            .expect("engines don't error");
+        TxMerkleNode::from_engine(encoder)
+    }
+
+    fn check_merkle_branch(&self, mut hash: TxMerkleNode) -> TxMerkleNode {
+        let b = self.branch_side_mask;
+        let _length = self.branch_hash.len();
+        for (n, branch_hash) in self.branch_hash.iter().enumerate() {
+            let parent_hash = if b >> n & 1 == 1 {
+                // left
+                MerkleBranch::parent_hash(branch_hash, &hash)
+            } else {
+                // right
+                MerkleBranch::parent_hash(&hash, branch_hash)
+            };
+
+            hash = parent_hash;
+        }
+        hash
+    }
+}
+
+
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+pub struct ReconciliationInvalidTx {
+    pub tx_hash: Txid,
+    pub pos: u32
+}
+impl_consensus_encoding!(ReconciliationInvalidTx, tx_hash, pos);
+
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+pub struct SignedBlockHeader {
+    version: i32,
+    block_time: u32,
+    block_height: u64,
+    mined_block_index: u64,
+    pub prev_block_hash: BlockHash,
+    pub merkle_root: TxMerkleNode,
+    pub current_fee: i64,
+}
+
+impl SignedBlockHeader {
+    pub fn block_hash(&self) -> BlockHash {
+        let mut engine = BlockHash::engine();
+        self.consensus_encode(&mut engine).expect("engines don't error");
+        BlockHash::from_engine(engine)
+    }    
+}
+
+impl Encodable for SignedBlockHeader {
+    fn consensus_encode<W: std::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, std::io::Error> {
+        let mut len = 0;
+        len += self.version.consensus_encode(writer)?;
+        len += self.block_time.consensus_encode(writer)?;
+        len += self.block_height.consensus_encode(writer)?;
+        len += self.mined_block_index.consensus_encode(writer)?;
+        len += self.prev_block_hash.consensus_encode(writer)?;
+        len += self.merkle_root.consensus_encode(writer)?;
+        len += self.current_fee.consensus_encode(writer)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for SignedBlockHeader {
+    fn consensus_decode_from_finite_reader<R: std::io::Read + ?Sized>(
+        reader: &mut R,
+    ) -> Result<Self, encode::Error> {
+        Ok(Self {
+            version: Decodable::consensus_decode_from_finite_reader(reader)?,
+            block_time: Decodable::consensus_decode_from_finite_reader(reader)?,
+            block_height: Decodable::consensus_decode_from_finite_reader(reader)?,
+            mined_block_index: Decodable::consensus_decode_from_finite_reader(reader)?,
+            prev_block_hash: Decodable::consensus_decode_from_finite_reader(reader)?,
+            merkle_root: Decodable::consensus_decode_from_finite_reader(reader)?,
+            current_fee: Decodable::consensus_decode_from_finite_reader(reader)?,
+        })
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
+pub struct SignedBlock {
+    pub header: SignedBlockHeader,
+    pub vtx: Vec<Transaction>,
+}
+impl_consensus_encoding!(SignedBlock, header, vtx);
+
+impl SignedBlock {
+    pub fn block_hash(&self) -> BlockHash {
+        self.header.block_hash()
+    }    
 }
 
 /// Bitcoin block version number.

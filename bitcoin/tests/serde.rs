@@ -224,10 +224,10 @@ fn serde_regression_psbt() {
         version: transaction::Version::ONE,
         assettype: 0,
         precision: 0,
-        headline: "".to_string(),
-        ticker: "".to_string(),
+        headline: vec![],
+        ticker: vec![],
         payload: Txid::all_zeros(),
-        payloaddata: "".to_string(),
+        payloaddata: vec![],
         lock_time: absolute::LockTime::ZERO,
         input: vec![TxIn {
             previous_output: OutPoint {

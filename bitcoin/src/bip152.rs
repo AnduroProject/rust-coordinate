@@ -387,10 +387,10 @@ mod test {
             version: transaction::Version::ONE,
             assettype: 0,
             precision: 0,
-            headline: "".to_string(),
-            ticker: "".to_string(),
+            headline: vec![],
+            ticker: vec![],
             payload: Txid::all_zeros(),
-            payloaddata: "".to_string(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::from_consensus(2),
             input: vec![TxIn {
                 previous_output: OutPoint::new(Txid::hash(nonce), 0),

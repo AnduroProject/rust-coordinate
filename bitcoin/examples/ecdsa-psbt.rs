@@ -180,10 +180,10 @@ impl WatchOnly {
             version: transaction::Version::TWO,
             assettype: 0,
             precision: 0,
-            headline: "".to_string(),
-            ticker: "".to_string(),
+            headline: vec![],
+            ticker: vec![],
             payload: Txid::all_zeros(),
-            payloaddata: "".to_string(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::ZERO,
             input: vec![TxIn {
                 previous_output: OutPoint { txid: INPUT_UTXO_TXID.parse()?, vout: INPUT_UTXO_VOUT },
