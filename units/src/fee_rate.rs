@@ -5,9 +5,11 @@
 use core::fmt;
 use core::ops::{Div, Mul};
 
-use super::Weight;
-use crate::prelude::*;
-use crate::Amount;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+use crate::amount::Amount;
+use crate::weight::Weight;
 
 /// Represents fee rate.
 ///
@@ -15,7 +17,6 @@ use crate::Amount;
 /// up the types as well as basic formatting features.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct FeeRate(u64);
 
@@ -36,10 +37,10 @@ impl FeeRate {
     /// Minimum fee rate required to broadcast a transaction.
     ///
     /// The value matches the default Bitcoin Core policy at the time of library release.
-    pub const BROADCAST_MIN: FeeRate = FeeRate::from_sat_per_vb_unchecked(1);
+    pub const BROADCAST_MIN: FeeRate = FeeRate::from_sat_per_vb_u32(1);
 
     /// Fee rate used to compute dust amount.
-    pub const DUST: FeeRate = FeeRate::from_sat_per_vb_unchecked(3);
+    pub const DUST: FeeRate = FeeRate::from_sat_per_vb_u32(3);
 
     /// Constructs `FeeRate` from satoshis per 1000 weight units.
     pub const fn from_sat_per_kwu(sat_kwu: u64) -> Self { FeeRate(sat_kwu) }
@@ -56,7 +57,14 @@ impl FeeRate {
         Some(FeeRate(sat_vb.checked_mul(1000 / 4)?))
     }
 
+    /// Constructs a new [`FeeRate`] from satoshis per virtual bytes.
+    pub const fn from_sat_per_vb_u32(sat_vb: u32) -> Self {
+        let sat_vb = sat_vb as u64; // No `Into` in const context.
+        FeeRate(sat_vb * (1000 / 4))
+    }
+
     /// Constructs `FeeRate` from satoshis per virtual bytes without overflow check.
+    #[deprecated(since = "0.32.7", note = "use from_sat_per_vb_u32 instead")]
     pub const fn from_sat_per_vb_unchecked(sat_vb: u64) -> Self { FeeRate(sat_vb * (1000 / 4)) }
 
     /// Returns raw fee rate.
@@ -94,18 +102,6 @@ impl FeeRate {
     /// if overflow occurred.
     ///
     /// This is equivalent to `Self::checked_mul_by_weight()`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use bitcoin::{absolute, transaction, FeeRate, Transaction};
-    /// # // Dummy transaction.
-    /// # let tx = Transaction { version: transaction::Version::ONE, lock_time: absolute::LockTime::ZERO, input: vec![], output: vec![] };
-    ///
-    /// let rate = FeeRate::from_sat_per_vb(1).expect("1 sat/vbyte is valid");
-    /// let fee = rate.fee_wu(tx.weight()).unwrap();
-    /// assert_eq!(fee.to_sat(), tx.vsize() as u64);
-    /// ```
     pub fn fee_wu(self, weight: Weight) -> Option<Amount> { self.checked_mul_by_weight(weight) }
 
     /// Calculates fee by multiplying this fee rate by weight, in virtual bytes, returning `None`
@@ -154,12 +150,10 @@ impl Div<Weight> for Amount {
     fn div(self, rhs: Weight) -> Self::Output { FeeRate(self.to_sat() * 1000 / rhs.to_wu()) }
 }
 
-crate::parse::impl_parse_str_from_int_infallible!(FeeRate, u64, from_sat_per_kwu);
+crate::impl_parse_str_from_int_infallible!(FeeRate, u64, from_sat_per_kwu);
 
 #[cfg(test)]
 mod tests {
-    use std::u64;
-
     use super::*;
 
     #[test]
@@ -181,15 +175,17 @@ mod tests {
     fn fee_rate_from_sat_per_vb_overflow_test() {
         let fee_rate = FeeRate::from_sat_per_vb(u64::MAX);
         assert!(fee_rate.is_none());
-    }
+    } 
 
     #[test]
-    fn from_sat_per_vb_unchecked_test() {
-        let fee_rate = FeeRate::from_sat_per_vb_unchecked(10);
+    fn from_sat_per_vb_u32() {
+        let fee_rate = FeeRate::from_sat_per_vb_u32(10);
         assert_eq!(FeeRate(2500), fee_rate);
     }
 
     #[test]
+    #[cfg(debug_assertions)]
+    #[allow(deprecated)]        // Keep test until we remove the function.
     #[should_panic]
     fn from_sat_per_vb_unchecked_panic_test() { FeeRate::from_sat_per_vb_unchecked(u64::MAX); }
 
@@ -235,22 +231,5 @@ mod tests {
 
         let fee_rate = FeeRate(10).checked_div(0);
         assert!(fee_rate.is_none());
-    }
-
-    #[test]
-    fn fee_convenience_functions_agree() {
-        use hex::test_hex_unwrap as hex;
-
-        use crate::blockdata::transaction::Transaction;
-        use crate::consensus::Decodable;
-
-        const SOME_TX: &str = "0100000001a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece010000006c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52ffffffff0100e1f505000000001976a9140389035a9225b3839e2bbf32d826a1e222031fd888ac00000000";
-
-        let raw_tx = hex!(SOME_TX);
-        let tx: Transaction = Decodable::consensus_decode(&mut raw_tx.as_slice()).unwrap();
-
-        let rate = FeeRate::from_sat_per_vb(1).expect("1 sat/byte is valid");
-
-        assert_eq!(rate.fee_vb(tx.vsize() as u64), rate.fee_wu(tx.weight()));
     }
 }

@@ -5,7 +5,11 @@
 use core::fmt;
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
-use crate::prelude::*;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
+/// The factor that non-witness serialization data is multiplied by during weight calculation.
+pub const WITNESS_SCALE_FACTOR: usize = 4;
 
 /// Represents block weight - the weight of a transaction or block.
 ///
@@ -13,7 +17,6 @@ use crate::prelude::*;
 /// up the types as well as basic formatting features.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Weight(u64);
 
@@ -32,7 +35,7 @@ impl Weight {
     pub const MAX: Weight = Weight(u64::MAX);
 
     /// The factor that non-witness serialization data is multiplied by during weight calculation.
-    pub const WITNESS_SCALE_FACTOR: u64 = crate::blockdata::constants::WITNESS_SCALE_FACTOR as u64;
+    pub const WITNESS_SCALE_FACTOR: u64 = WITNESS_SCALE_FACTOR as u64;
 
     /// The maximum allowed weight for a block, see BIP 141 (network rule).
     pub const MAX_BLOCK: Weight = Weight(4_000_000);
@@ -52,6 +55,25 @@ impl Weight {
     /// Constructs `Weight` from virtual bytes, returning `None` on overflow.
     pub fn from_vb(vb: u64) -> Option<Self> {
         vb.checked_mul(Self::WITNESS_SCALE_FACTOR).map(Weight::from_wu)
+    }
+
+    /// Constructs `Weight` from virtual bytes panicking on overflow.
+    ///
+    /// # Panics
+    ///
+    /// If the conversion from virtual bytes overflows.
+    pub const fn from_vb_unwrap(vb: u64) -> Weight {
+        match vb.checked_mul(Self::WITNESS_SCALE_FACTOR) {
+            Some(weight) => Weight(weight),
+            None => {
+                // When MSRV is 1.57+ we can use `panic!()`.
+                #[allow(unconditional_panic)]
+                #[allow(clippy::let_unit_value)]
+                #[allow(clippy::out_of_bounds_indexing)]
+                let _int_overflow_scaling_weight = [(); 0][1];
+                Weight(0)
+            }
+        }
     }
 
     /// Constructs `Weight` from virtual bytes without an overflow check.
@@ -151,12 +173,19 @@ mod tests {
     }
 
     #[test]
+    fn from_vb_const() {
+        const WU: Weight = Weight::from_vb_unwrap(1);
+        assert_eq!(Weight(4), WU);
+    }
+
+    #[test]
     fn from_vb_unchecked() {
         let vb = Weight::from_vb_unchecked(1);
         assert_eq!(Weight(4), vb);
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic]
     fn from_vb_unchecked_panic() { Weight::from_vb_unchecked(u64::MAX); }
 
@@ -308,4 +337,4 @@ impl<'a> core::iter::Sum<&'a Weight> for Weight {
     }
 }
 
-crate::parse::impl_parse_str_from_int_infallible!(Weight, u64, from_wu);
+crate::impl_parse_str_from_int_infallible!(Weight, u64, from_wu);

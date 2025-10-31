@@ -6,23 +6,18 @@
 //! at <https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki>.
 //!
 
-use core::convert::TryInto;
-use core::default::Default;
 use core::ops::Index;
 use core::str::FromStr;
 use core::{fmt, slice};
 
 use hashes::{hash160, hash_newtype, sha512, Hash, HashEngine, Hmac, HmacEngine};
 use internals::{impl_array_newtype, write_err};
-use secp256k1::{self, Secp256k1, XOnlyPublicKey};
-#[cfg(feature = "serde")]
-use serde;
+use io::Write;
+use secp256k1::{Secp256k1, XOnlyPublicKey};
 
-use crate::base58;
-use crate::crypto::key::{self, Keypair, PrivateKey, PublicKey};
+use crate::crypto::key::{CompressedPublicKey, Keypair, PrivateKey};
 use crate::internal_macros::impl_bytes_newtype;
-use crate::io::Write;
-use crate::network::Network;
+use crate::network::NetworkKind;
 use crate::prelude::*;
 
 /// Version bytes for extended public keys on the Bitcoin network.
@@ -33,6 +28,22 @@ const VERSION_BYTES_MAINNET_PRIVATE: [u8; 4] = [0x04, 0x88, 0xAD, 0xE4];
 const VERSION_BYTES_TESTNETS_PUBLIC: [u8; 4] = [0x04, 0x35, 0x87, 0xCF];
 /// Version bytes for extended private keys on any of the testnet networks.
 const VERSION_BYTES_TESTNETS_PRIVATE: [u8; 4] = [0x04, 0x35, 0x83, 0x94];
+
+/// The old name for xpub, extended public key.
+#[deprecated(since = "0.31.0", note = "use xpub instead")]
+pub type ExtendedPubKey = Xpub;
+
+/// The old name for xpub, extended public key (with a released typo in it).
+#[deprecated(since = "0.31.0", note = "use xpub instead")]
+pub type ExtendendPubKey = Xpub;
+
+/// The old name for xpriv, extended public key.
+#[deprecated(since = "0.31.0", note = "use xpriv instead")]
+pub type ExtendedPrivKey = Xpriv;
+
+/// The old name for xpriv, extended public key (with a released typo in it).
+#[deprecated(since = "0.31.0", note = "use xpriv instead")]
+pub type ExtendendPrivKey = Xpriv;
 
 /// A chain code
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -62,7 +73,7 @@ hash_newtype! {
 #[cfg_attr(feature = "std", derive(Debug))]
 pub struct Xpriv {
     /// The network this key is to be used on
-    pub network: Network,
+    pub network: NetworkKind,
     /// How many derivations this key is from the master (which is 0)
     pub depth: u8,
     /// Fingerprint of the parent key (0 for master)
@@ -94,8 +105,8 @@ impl fmt::Debug for Xpriv {
 /// Extended public key
 #[derive(Copy, Clone, PartialEq, Eq, Debug, PartialOrd, Ord, Hash)]
 pub struct Xpub {
-    /// The network this key is to be used on
-    pub network: Network,
+    /// The network kind this key is to be used on
+    pub network: NetworkKind,
     /// How many derivations this key is from the master (which is 0)
     pub depth: u8,
     /// Fingerprint of the parent key
@@ -167,6 +178,9 @@ impl ChildNumber {
 
     /// Returns the child number that is a single increment from this one.
     pub fn increment(self) -> Result<ChildNumber, Error> {
+        // Bare addition in this function is okay, because we have an invariant that
+        // `index` is always within [0, 2^31 - 1]. FIXME this is not actually an
+        // invariant because the fields are public.
         match self {
             ChildNumber::Normal { index: idx } => ChildNumber::from_normal_idx(idx + 1),
             ChildNumber::Hardened { index: idx } => ChildNumber::from_hardened_idx(idx + 1),
@@ -248,7 +262,7 @@ impl serde::Serialize for ChildNumber {
 /// Trait that allows possibly failable conversion from a type into a
 /// derivation path
 pub trait IntoDerivationPath {
-    /// Convers a given type into a [`DerivationPath`] with possible error
+    /// Converts a given type into a [`DerivationPath`] with possible error
     fn into_derivation_path(self) -> Result<DerivationPath, Error>;
 }
 
@@ -323,12 +337,13 @@ impl FromStr for DerivationPath {
     type Err = Error;
 
     fn from_str(path: &str) -> Result<DerivationPath, Error> {
-        let mut parts = path.split('/');
-        // First parts must be `m`.
-        if parts.next().unwrap() != "m" {
-            return Err(Error::InvalidDerivationPathFormat);
+        if path.is_empty() || path == "m" || path == "m/" {
+            return Ok(vec![].into());
         }
 
+        let path = path.strip_prefix("m/").unwrap_or(path);
+
+        let parts = path.split('/');
         let ret: Result<Vec<ChildNumber>, Error> = parts.map(str::parse).collect();
         Ok(DerivationPath(ret?))
     }
@@ -412,7 +427,7 @@ impl DerivationPath {
     ///
     /// let base = DerivationPath::from_str("m/42").unwrap();
     ///
-    /// let deriv_1 = base.extend(DerivationPath::from_str("m/0/1").unwrap());
+    /// let deriv_1 = base.extend(DerivationPath::from_str("0/1").unwrap());
     /// let deriv_2 = base.extend(&[
     ///     ChildNumber::from_normal_idx(0).unwrap(),
     ///     ChildNumber::from_normal_idx(1).unwrap()
@@ -443,10 +458,13 @@ impl DerivationPath {
 
 impl fmt::Display for DerivationPath {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("m")?;
-        for cn in self.0.iter() {
+        let mut iter = self.0.iter();
+        if let Some(first_element) = iter.next() {
+            write!(f, "{}", first_element)?;
+        }
+        for cn in iter {
             f.write_str("/")?;
-            fmt::Display::fmt(cn, f)?;
+            write!(f, "{}", cn)?;
         }
         Ok(())
     }
@@ -466,6 +484,10 @@ pub type KeySource = (Fingerprint, DerivationPath);
 pub enum Error {
     /// A pk->pk derivation was attempted on a hardened key
     CannotDeriveFromHardenedKey,
+    /// Attempted to derive a child of depth 256 or higher.
+    ///
+    /// There is no way to encode such xkeys.
+    MaximumDepthExceeded,
     /// A secp256k1 error occurred
     Secp256k1(secp256k1::Error),
     /// A child number was provided that was out of range
@@ -484,7 +506,11 @@ pub enum Error {
     Hex(hex::HexToArrayError),
     /// `PublicKey` hex should be 66 or 130 digits long.
     InvalidPublicKeyHexLength(usize),
+    /// Base58 decoded data was an invalid length.
+    InvalidBase58PayloadLength(InvalidBase58PayloadLengthError),
 }
+
+internals::impl_from_infallible!(Error);
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -493,6 +519,7 @@ impl fmt::Display for Error {
         match *self {
             CannotDeriveFromHardenedKey =>
                 f.write_str("cannot derive hardened key from public key"),
+            MaximumDepthExceeded => f.write_str("cannot derive child of depth 256 or higher"),
             Secp256k1(ref e) => write_err!(f, "secp256k1 error"; e),
             InvalidChildNumber(ref n) =>
                 write!(f, "child number {} is invalid (not within [0, 2^31 - 1])", n),
@@ -505,6 +532,7 @@ impl fmt::Display for Error {
             Hex(ref e) => write_err!(f, "Hexadecimal decoding error"; e),
             InvalidPublicKeyHexLength(got) =>
                 write!(f, "PublicKey hex should be 66 or 130 digits long, got: {}", got),
+            InvalidBase58PayloadLength(ref e) => write_err!(f, "base58 payload"; e),
         }
     }
 }
@@ -518,25 +546,15 @@ impl std::error::Error for Error {
             Secp256k1(ref e) => Some(e),
             Base58(ref e) => Some(e),
             Hex(ref e) => Some(e),
+            InvalidBase58PayloadLength(ref e) => Some(e),
             CannotDeriveFromHardenedKey
+            | MaximumDepthExceeded
             | InvalidChildNumber(_)
             | InvalidChildNumberFormat
             | InvalidDerivationPathFormat
             | UnknownVersion(_)
             | WrongExtendedKeyLength(_)
             | InvalidPublicKeyHexLength(_) => None,
-        }
-    }
-}
-
-impl From<key::Error> for Error {
-    fn from(err: key::Error) -> Self {
-        match err {
-            key::Error::Base58(e) => Error::Base58(e),
-            key::Error::Secp256k1(e) => Error::Secp256k1(e),
-            key::Error::InvalidKeyPrefix(_) => Error::Secp256k1(secp256k1::Error::InvalidPublicKey),
-            key::Error::Hex(e) => Error::Hex(e),
-            key::Error::InvalidHexLength(got) => Error::InvalidPublicKeyHexLength(got),
         }
     }
 }
@@ -549,15 +567,19 @@ impl From<base58::Error> for Error {
     fn from(err: base58::Error) -> Self { Error::Base58(err) }
 }
 
+impl From<InvalidBase58PayloadLengthError> for Error {
+    fn from(e: InvalidBase58PayloadLengthError) -> Error { Self::InvalidBase58PayloadLength(e) }
+}
+
 impl Xpriv {
     /// Construct a new master key from a seed value
-    pub fn new_master(network: Network, seed: &[u8]) -> Result<Xpriv, Error> {
+    pub fn new_master(network: impl Into<NetworkKind>, seed: &[u8]) -> Result<Xpriv, Error> {
         let mut hmac_engine: HmacEngine<sha512::Hash> = HmacEngine::new(b"Bitcoin seed");
         hmac_engine.input(seed);
         let hmac_result: Hmac<sha512::Hash> = Hmac::from_engine(hmac_engine);
 
         Ok(Xpriv {
-            network,
+            network: network.into(),
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::from_normal_idx(0)?,
@@ -623,7 +645,7 @@ impl Xpriv {
 
         Ok(Xpriv {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaximumDepthExceeded)?,
             parent_fingerprint: self.fingerprint(secp),
             child_number: i,
             private_key: tweaked,
@@ -638,9 +660,9 @@ impl Xpriv {
         }
 
         let network = if data.starts_with(&VERSION_BYTES_MAINNET_PRIVATE) {
-            Network::Bitcoin
+            NetworkKind::Main
         } else if data.starts_with(&VERSION_BYTES_TESTNETS_PRIVATE) {
-            Network::Testnet
+            NetworkKind::Test
         } else {
             let (b0, b1, b2, b3) = (data[0], data[1], data[2], data[3]);
             return Err(Error::UnknownVersion([b0, b1, b2, b3]));
@@ -664,8 +686,8 @@ impl Xpriv {
     pub fn encode(&self) -> [u8; 78] {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(&match self.network {
-            Network::Bitcoin => VERSION_BYTES_MAINNET_PRIVATE,
-            Network::Testnet | Network::Signet | Network::Regtest => VERSION_BYTES_TESTNETS_PRIVATE,
+            NetworkKind::Main => VERSION_BYTES_MAINNET_PRIVATE,
+            NetworkKind::Test => VERSION_BYTES_TESTNETS_PRIVATE,
         });
         ret[4] = self.depth;
         ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
@@ -701,7 +723,7 @@ impl Xpub {
     }
 
     /// Constructs ECDSA compressed public key matching internal public key representation.
-    pub fn to_pub(self) -> PublicKey { PublicKey { compressed: true, inner: self.public_key } }
+    pub fn to_pub(self) -> CompressedPublicKey { CompressedPublicKey(self.public_key) }
 
     /// Constructs BIP340 x-only public key for BIP-340 signatures and Taproot use matching
     /// the internal public key representation.
@@ -755,7 +777,7 @@ impl Xpub {
 
         Ok(Xpub {
             network: self.network,
-            depth: self.depth + 1,
+            depth: self.depth.checked_add(1).ok_or(Error::MaximumDepthExceeded)?,
             parent_fingerprint: self.fingerprint(),
             child_number: i,
             public_key: tweaked,
@@ -770,9 +792,9 @@ impl Xpub {
         }
 
         let network = if data.starts_with(&VERSION_BYTES_MAINNET_PUBLIC) {
-            Network::Bitcoin
+            NetworkKind::Main
         } else if data.starts_with(&VERSION_BYTES_TESTNETS_PUBLIC) {
-            Network::Testnet
+            NetworkKind::Test
         } else {
             let (b0, b1, b2, b3) = (data[0], data[1], data[2], data[3]);
             return Err(Error::UnknownVersion([b0, b1, b2, b3]));
@@ -796,8 +818,8 @@ impl Xpub {
     pub fn encode(&self) -> [u8; 78] {
         let mut ret = [0; 78];
         ret[0..4].copy_from_slice(&match self.network {
-            Network::Bitcoin => VERSION_BYTES_MAINNET_PUBLIC,
-            Network::Testnet | Network::Signet | Network::Regtest => VERSION_BYTES_TESTNETS_PUBLIC,
+            NetworkKind::Main => VERSION_BYTES_MAINNET_PUBLIC,
+            NetworkKind::Test => VERSION_BYTES_TESTNETS_PUBLIC,
         });
         ret[4] = self.depth;
         ret[5..9].copy_from_slice(&self.parent_fingerprint[..]);
@@ -833,7 +855,7 @@ impl FromStr for Xpriv {
         let data = base58::decode_check(inp)?;
 
         if data.len() != 78 {
-            return Err(base58::Error::InvalidLength(data.len()).into());
+            return Err(InvalidBase58PayloadLengthError { length: data.len() }.into());
         }
 
         Xpriv::decode(&data)
@@ -853,7 +875,7 @@ impl FromStr for Xpub {
         let data = base58::decode_check(inp)?;
 
         if data.len() != 78 {
-            return Err(base58::Error::InvalidLength(data.len()).into());
+            return Err(InvalidBase58PayloadLengthError { length: data.len() }.into());
         }
 
         Xpub::decode(&data)
@@ -868,38 +890,63 @@ impl From<&Xpub> for XKeyIdentifier {
     fn from(key: &Xpub) -> XKeyIdentifier { key.identifier() }
 }
 
+/// Decoded base58 data was an invalid length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidBase58PayloadLengthError {
+    /// The base58 payload length we got after decoding xpriv/xpub string.
+    pub(crate) length: usize,
+}
+
+impl InvalidBase58PayloadLengthError {
+    /// Returns the invalid payload length.
+    pub fn invalid_base58_payload_length(&self) -> usize { self.length }
+}
+
+impl fmt::Display for InvalidBase58PayloadLengthError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "decoded base58 xpriv/xpub data was an invalid length: {} (expected 78)",
+            self.length
+        )
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for InvalidBase58PayloadLengthError {}
+
 #[cfg(test)]
 mod tests {
-    use core::str::FromStr;
-
     use hex::test_hex_unwrap as hex;
-    use secp256k1::{self, Secp256k1};
 
     use super::ChildNumber::{Hardened, Normal};
     use super::*;
-    use crate::network::Network::{self, Bitcoin};
 
     #[test]
     fn test_parse_derivation_path() {
-        assert_eq!(DerivationPath::from_str("42"), Err(Error::InvalidDerivationPathFormat));
-        assert_eq!(DerivationPath::from_str("n/0'/0"), Err(Error::InvalidDerivationPathFormat));
-        assert_eq!(DerivationPath::from_str("4/m/5"), Err(Error::InvalidDerivationPathFormat));
-        assert_eq!(DerivationPath::from_str("m//3/0'"), Err(Error::InvalidChildNumberFormat));
-        assert_eq!(DerivationPath::from_str("m/0h/0x"), Err(Error::InvalidChildNumberFormat));
+        assert_eq!(DerivationPath::from_str("n/0'/0"), Err(Error::InvalidChildNumberFormat));
+        assert_eq!(DerivationPath::from_str("4/m/5"), Err(Error::InvalidChildNumberFormat));
+        assert_eq!(DerivationPath::from_str("//3/0'"), Err(Error::InvalidChildNumberFormat));
+        assert_eq!(DerivationPath::from_str("0h/0x"), Err(Error::InvalidChildNumberFormat));
         assert_eq!(
-            DerivationPath::from_str("m/2147483648"),
+            DerivationPath::from_str("2147483648"),
             Err(Error::InvalidChildNumber(2147483648))
         );
 
-        assert_eq!(DerivationPath::master(), DerivationPath::from_str("m").unwrap());
+        assert_eq!(DerivationPath::master(), DerivationPath::from_str("").unwrap());
         assert_eq!(DerivationPath::master(), DerivationPath::default());
-        assert_eq!(DerivationPath::from_str("m"), Ok(vec![].into()));
+
+        // Acceptable forms for a master path.
+        assert_eq!(DerivationPath::from_str("m").unwrap(), DerivationPath(vec![]));
+        assert_eq!(DerivationPath::from_str("m/").unwrap(), DerivationPath(vec![]));
+        assert_eq!(DerivationPath::from_str("").unwrap(), DerivationPath(vec![]));
+
         assert_eq!(
-            DerivationPath::from_str("m/0'"),
+            DerivationPath::from_str("0'"),
             Ok(vec![ChildNumber::from_hardened_idx(0).unwrap()].into())
         );
         assert_eq!(
-            DerivationPath::from_str("m/0'/1"),
+            DerivationPath::from_str("0'/1"),
             Ok(vec![
                 ChildNumber::from_hardened_idx(0).unwrap(),
                 ChildNumber::from_normal_idx(1).unwrap()
@@ -907,7 +954,7 @@ mod tests {
             .into())
         );
         assert_eq!(
-            DerivationPath::from_str("m/0h/1/2'"),
+            DerivationPath::from_str("0h/1/2'"),
             Ok(vec![
                 ChildNumber::from_hardened_idx(0).unwrap(),
                 ChildNumber::from_normal_idx(1).unwrap(),
@@ -916,7 +963,7 @@ mod tests {
             .into())
         );
         assert_eq!(
-            DerivationPath::from_str("m/0'/1/2h/2"),
+            DerivationPath::from_str("0'/1/2h/2"),
             Ok(vec![
                 ChildNumber::from_hardened_idx(0).unwrap(),
                 ChildNumber::from_normal_idx(1).unwrap(),
@@ -925,17 +972,20 @@ mod tests {
             ]
             .into())
         );
-        assert_eq!(
-            DerivationPath::from_str("m/0'/1/2'/2/1000000000"),
-            Ok(vec![
-                ChildNumber::from_hardened_idx(0).unwrap(),
-                ChildNumber::from_normal_idx(1).unwrap(),
-                ChildNumber::from_hardened_idx(2).unwrap(),
-                ChildNumber::from_normal_idx(2).unwrap(),
-                ChildNumber::from_normal_idx(1000000000).unwrap(),
-            ]
-            .into())
-        );
+        let want = DerivationPath::from(vec![
+            ChildNumber::from_hardened_idx(0).unwrap(),
+            ChildNumber::from_normal_idx(1).unwrap(),
+            ChildNumber::from_hardened_idx(2).unwrap(),
+            ChildNumber::from_normal_idx(2).unwrap(),
+            ChildNumber::from_normal_idx(1000000000).unwrap(),
+        ]);
+        assert_eq!(DerivationPath::from_str("0'/1/2'/2/1000000000").unwrap(), want);
+        assert_eq!(DerivationPath::from_str("m/0'/1/2'/2/1000000000").unwrap(), want);
+
+        let s = "0'/50/3'/5/545456";
+        assert_eq!(DerivationPath::from_str(s), s.into_derivation_path());
+        assert_eq!(DerivationPath::from_str(s), s.to_string().into_derivation_path());
+
         let s = "m/0'/50/3'/5/545456";
         assert_eq!(DerivationPath::from_str(s), s.into_derivation_path());
         assert_eq!(DerivationPath::from_str(s), s.to_string().into_derivation_path());
@@ -943,7 +993,7 @@ mod tests {
 
     #[test]
     fn test_derivation_path_conversion_index() {
-        let path = DerivationPath::from_str("m/0h/1/2'").unwrap();
+        let path = DerivationPath::from_str("0h/1/2'").unwrap();
         let numbers: Vec<ChildNumber> = path.clone().into();
         let path2: DerivationPath = numbers.into();
         assert_eq!(path, path2);
@@ -952,13 +1002,13 @@ mod tests {
             &[ChildNumber::from_hardened_idx(0).unwrap(), ChildNumber::from_normal_idx(1).unwrap()]
         );
         let indexed: DerivationPath = path[..2].into();
-        assert_eq!(indexed, DerivationPath::from_str("m/0h/1").unwrap());
+        assert_eq!(indexed, DerivationPath::from_str("0h/1").unwrap());
         assert_eq!(indexed.child(ChildNumber::from_hardened_idx(2).unwrap()), path);
     }
 
     fn test_path<C: secp256k1::Signing + secp256k1::Verification>(
         secp: &Secp256k1<C>,
-        network: Network,
+        network: NetworkKind,
         seed: &[u8],
         path: DerivationPath,
         expected_sk: &str,
@@ -1019,29 +1069,29 @@ mod tests {
         assert_eq!(cn.increment().err(), Some(Error::InvalidChildNumber(1 << 31)));
 
         let cn = ChildNumber::from_normal_idx(350).unwrap();
-        let path = DerivationPath::from_str("m/42'").unwrap();
+        let path = DerivationPath::from_str("42'").unwrap();
         let mut iter = path.children_from(cn);
-        assert_eq!(iter.next(), Some("m/42'/350".parse().unwrap()));
-        assert_eq!(iter.next(), Some("m/42'/351".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/350".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/351".parse().unwrap()));
 
-        let path = DerivationPath::from_str("m/42'/350'").unwrap();
+        let path = DerivationPath::from_str("42'/350'").unwrap();
         let mut iter = path.normal_children();
-        assert_eq!(iter.next(), Some("m/42'/350'/0".parse().unwrap()));
-        assert_eq!(iter.next(), Some("m/42'/350'/1".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/350'/0".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/350'/1".parse().unwrap()));
 
-        let path = DerivationPath::from_str("m/42'/350'").unwrap();
+        let path = DerivationPath::from_str("42'/350'").unwrap();
         let mut iter = path.hardened_children();
-        assert_eq!(iter.next(), Some("m/42'/350'/0'".parse().unwrap()));
-        assert_eq!(iter.next(), Some("m/42'/350'/1'".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/350'/0'".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/350'/1'".parse().unwrap()));
 
         let cn = ChildNumber::from_hardened_idx(42350).unwrap();
-        let path = DerivationPath::from_str("m/42'").unwrap();
+        let path = DerivationPath::from_str("42'").unwrap();
         let mut iter = path.children_from(cn);
-        assert_eq!(iter.next(), Some("m/42'/42350'".parse().unwrap()));
-        assert_eq!(iter.next(), Some("m/42'/42351'".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/42350'".parse().unwrap()));
+        assert_eq!(iter.next(), Some("42'/42351'".parse().unwrap()));
 
         let cn = ChildNumber::from_hardened_idx(max).unwrap();
-        let path = DerivationPath::from_str("m/42'").unwrap();
+        let path = DerivationPath::from_str("42'").unwrap();
         let mut iter = path.children_from(cn);
         assert!(iter.next().is_some());
         assert!(iter.next().is_none());
@@ -1053,32 +1103,32 @@ mod tests {
         let seed = hex!("000102030405060708090a0b0c0d0e0f");
 
         // m
-        test_path(&secp, Bitcoin, &seed, "m".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m".parse().unwrap(),
                   "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
                   "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8");
 
         // m/0h
-        test_path(&secp, Bitcoin, &seed, "m/0h".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0h".parse().unwrap(),
                   "xprv9uHRZZhk6KAJC1avXpDAp4MDc3sQKNxDiPvvkX8Br5ngLNv1TxvUxt4cV1rGL5hj6KCesnDYUhd7oWgT11eZG7XnxHrnYeSvkzY7d2bhkJ7",
                   "xpub68Gmy5EdvgibQVfPdqkBBCHxA5htiqg55crXYuXoQRKfDBFA1WEjWgP6LHhwBZeNK1VTsfTFUHCdrfp1bgwQ9xv5ski8PX9rL2dZXvgGDnw");
 
         // m/0h/1
-        test_path(&secp, Bitcoin, &seed, "m/0h/1".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0h/1".parse().unwrap(),
                    "xprv9wTYmMFdV23N2TdNG573QoEsfRrWKQgWeibmLntzniatZvR9BmLnvSxqu53Kw1UmYPxLgboyZQaXwTCg8MSY3H2EU4pWcQDnRnrVA1xe8fs",
                    "xpub6ASuArnXKPbfEwhqN6e3mwBcDTgzisQN1wXN9BJcM47sSikHjJf3UFHKkNAWbWMiGj7Wf5uMash7SyYq527Hqck2AxYysAA7xmALppuCkwQ");
 
         // m/0h/1/2h
-        test_path(&secp, Bitcoin, &seed, "m/0h/1/2h".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0h/1/2h".parse().unwrap(),
                   "xprv9z4pot5VBttmtdRTWfWQmoH1taj2axGVzFqSb8C9xaxKymcFzXBDptWmT7FwuEzG3ryjH4ktypQSAewRiNMjANTtpgP4mLTj34bhnZX7UiM",
                   "xpub6D4BDPcP2GT577Vvch3R8wDkScZWzQzMMUm3PWbmWvVJrZwQY4VUNgqFJPMM3No2dFDFGTsxxpG5uJh7n7epu4trkrX7x7DogT5Uv6fcLW5");
 
         // m/0h/1/2h/2
-        test_path(&secp, Bitcoin, &seed, "m/0h/1/2h/2".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0h/1/2h/2".parse().unwrap(),
                   "xprvA2JDeKCSNNZky6uBCviVfJSKyQ1mDYahRjijr5idH2WwLsEd4Hsb2Tyh8RfQMuPh7f7RtyzTtdrbdqqsunu5Mm3wDvUAKRHSC34sJ7in334",
                   "xpub6FHa3pjLCk84BayeJxFW2SP4XRrFd1JYnxeLeU8EqN3vDfZmbqBqaGJAyiLjTAwm6ZLRQUMv1ZACTj37sR62cfN7fe5JnJ7dh8zL4fiyLHV");
 
         // m/0h/1/2h/2/1000000000
-        test_path(&secp, Bitcoin, &seed, "m/0h/1/2h/2/1000000000".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0h/1/2h/2/1000000000".parse().unwrap(),
                   "xprvA41z7zogVVwxVSgdKUHDy1SKmdb533PjDz7J6N6mV6uS3ze1ai8FHa8kmHScGpWmj4WggLyQjgPie1rFSruoUihUZREPSL39UNdE3BBDu76",
                   "xpub6H1LXWLaKsWFhvm6RVpEL9P4KfRZSW7abD2ttkWP3SSQvnyA8FSVqNTEcYFgJS2UaFcxupHiYkro49S8yGasTvXEYBVPamhGW6cFJodrTHy");
     }
@@ -1089,32 +1139,32 @@ mod tests {
         let seed = hex!("fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542");
 
         // m
-        test_path(&secp, Bitcoin, &seed, "m".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m".parse().unwrap(),
                   "xprv9s21ZrQH143K31xYSDQpPDxsXRTUcvj2iNHm5NUtrGiGG5e2DtALGdso3pGz6ssrdK4PFmM8NSpSBHNqPqm55Qn3LqFtT2emdEXVYsCzC2U",
                   "xpub661MyMwAqRbcFW31YEwpkMuc5THy2PSt5bDMsktWQcFF8syAmRUapSCGu8ED9W6oDMSgv6Zz8idoc4a6mr8BDzTJY47LJhkJ8UB7WEGuduB");
 
         // m/0
-        test_path(&secp, Bitcoin, &seed, "m/0".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0".parse().unwrap(),
                   "xprv9vHkqa6EV4sPZHYqZznhT2NPtPCjKuDKGY38FBWLvgaDx45zo9WQRUT3dKYnjwih2yJD9mkrocEZXo1ex8G81dwSM1fwqWpWkeS3v86pgKt",
                   "xpub69H7F5d8KSRgmmdJg2KhpAK8SR3DjMwAdkxj3ZuxV27CprR9LgpeyGmXUbC6wb7ERfvrnKZjXoUmmDznezpbZb7ap6r1D3tgFxHmwMkQTPH");
 
         // m/0/2147483647h
-        test_path(&secp, Bitcoin, &seed, "m/0/2147483647h".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0/2147483647h".parse().unwrap(),
                   "xprv9wSp6B7kry3Vj9m1zSnLvN3xH8RdsPP1Mh7fAaR7aRLcQMKTR2vidYEeEg2mUCTAwCd6vnxVrcjfy2kRgVsFawNzmjuHc2YmYRmagcEPdU9",
                   "xpub6ASAVgeehLbnwdqV6UKMHVzgqAG8Gr6riv3Fxxpj8ksbH9ebxaEyBLZ85ySDhKiLDBrQSARLq1uNRts8RuJiHjaDMBU4Zn9h8LZNnBC5y4a");
 
         // m/0/2147483647h/1
-        test_path(&secp, Bitcoin, &seed, "m/0/2147483647h/1".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0/2147483647h/1".parse().unwrap(),
                   "xprv9zFnWC6h2cLgpmSA46vutJzBcfJ8yaJGg8cX1e5StJh45BBciYTRXSd25UEPVuesF9yog62tGAQtHjXajPPdbRCHuWS6T8XA2ECKADdw4Ef",
                   "xpub6DF8uhdarytz3FWdA8TvFSvvAh8dP3283MY7p2V4SeE2wyWmG5mg5EwVvmdMVCQcoNJxGoWaU9DCWh89LojfZ537wTfunKau47EL2dhHKon");
 
         // m/0/2147483647h/1/2147483646h
-        test_path(&secp, Bitcoin, &seed, "m/0/2147483647h/1/2147483646h".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0/2147483647h/1/2147483646h".parse().unwrap(),
                   "xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc",
                   "xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL");
 
         // m/0/2147483647h/1/2147483646h/2
-        test_path(&secp, Bitcoin, &seed, "m/0/2147483647h/1/2147483646h/2".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0/2147483647h/1/2147483646h/2".parse().unwrap(),
                   "xprvA2nrNbFZABcdryreWet9Ea4LvTJcGsqrMzxHx98MMrotbir7yrKCEXw7nadnHM8Dq38EGfSh6dqA9QWTyefMLEcBYJUuekgW4BYPJcr9E7j",
                   "xpub6FnCn6nSzZAw5Tw7cgR9bi15UV96gLZhjDstkXXxvCLsUXBGXPdSnLFbdpq8p9HmGsApME5hQTZ3emM2rnY5agb9rXpVGyy3bdW6EEgAtqt");
     }
@@ -1125,12 +1175,12 @@ mod tests {
         let seed = hex!("4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be");
 
         // m
-        test_path(&secp, Bitcoin, &seed, "m".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m".parse().unwrap(),
                   "xprv9s21ZrQH143K25QhxbucbDDuQ4naNntJRi4KUfWT7xo4EKsHt2QJDu7KXp1A3u7Bi1j8ph3EGsZ9Xvz9dGuVrtHHs7pXeTzjuxBrCmmhgC6",
                   "xpub661MyMwAqRbcEZVB4dScxMAdx6d4nFc9nvyvH3v4gJL378CSRZiYmhRoP7mBy6gSPSCYk6SzXPTf3ND1cZAceL7SfJ1Z3GC8vBgp2epUt13");
 
         // m/0h
-        test_path(&secp, Bitcoin, &seed, "m/0h".parse().unwrap(),
+        test_path(&secp, NetworkKind::Main, &seed, "m/0h".parse().unwrap(),
                   "xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L",
                   "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y");
     }
@@ -1193,7 +1243,7 @@ mod tests {
         }
 
         let xpriv = Xpriv {
-            network: Network::Bitcoin,
+            network: NetworkKind::Main,
             depth: 0,
             parent_fingerprint: Default::default(),
             child_number: ChildNumber::Normal { index: 0 },

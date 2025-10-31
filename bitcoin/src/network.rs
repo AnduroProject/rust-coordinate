@@ -18,7 +18,6 @@
 //! assert_eq!(&bytes[..], &[0xF9, 0xBE, 0xB4, 0xD9]);
 //! ```
 
-use core::convert::TryFrom;
 use core::fmt;
 use core::fmt::Display;
 use core::str::FromStr;
@@ -27,9 +26,37 @@ use internals::write_err;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::consensus::Params;
 use crate::constants::ChainHash;
 use crate::p2p::Magic;
-use crate::prelude::{String, ToOwned};
+use crate::prelude::*;
+
+/// What kind of network we are on.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NetworkKind {
+    /// The Bitcoin mainnet network.
+    Main,
+    /// Some kind of testnet network.
+    Test,
+}
+
+// We explicitly do not provide `is_testnet`, using `!network.is_mainnet()` is less
+// ambiguous due to confusion caused by signet/testnet/regtest.
+impl NetworkKind {
+    /// Returns true if this is real mainnet bitcoin.
+    pub fn is_mainnet(&self) -> bool { *self == NetworkKind::Main }
+}
+
+impl From<Network> for NetworkKind {
+    fn from(n: Network) -> Self {
+        use Network::*;
+
+        match n {
+            Bitcoin => NetworkKind::Main,
+            Testnet | Testnet4 | Signet | Regtest => NetworkKind::Test,
+        }
+    }
+}
 
 /// The cryptocurrency network to act on.
 #[derive(Copy, PartialEq, Eq, PartialOrd, Ord, Clone, Hash, Debug)]
@@ -40,8 +67,12 @@ use crate::prelude::{String, ToOwned};
 pub enum Network {
     /// Mainnet Bitcoin.
     Bitcoin,
-    /// Bitcoin's testnet network.
+    /// Bitcoin's testnet network. (In future versions this will be combined
+    /// into a single variant containing the version)
     Testnet,
+    /// Bitcoin's testnet4 network. (In future versions this will be combined
+    /// into a single variant containing the version)
+    Testnet4,
     /// Bitcoin's signet network.
     Signet,
     /// Bitcoin's regtest network.
@@ -56,7 +87,6 @@ impl Network {
     /// ```rust
     /// use bitcoin::p2p::Magic;
     /// use bitcoin::Network;
-    /// use std::convert::TryFrom;
     ///
     /// assert_eq!(Ok(Network::Bitcoin), Network::try_from(Magic::from_bytes([0xF9, 0xBE, 0xB4, 0xD9])));
     /// assert_eq!(None, Network::from_magic(Magic::from_bytes([0xFF, 0xFF, 0xFF, 0xFF])));
@@ -89,7 +119,9 @@ impl Network {
     pub fn to_core_arg(self) -> &'static str {
         match self {
             Network::Bitcoin => "main",
+            // For user-side compatibility, testnet3 is retained as test
             Network::Testnet => "test",
+            Network::Testnet4 => "testnet4",
             Network::Signet => "signet",
             Network::Regtest => "regtest",
         }
@@ -110,6 +142,7 @@ impl Network {
         let network = match core_arg {
             "main" => Bitcoin,
             "test" => Testnet,
+            "testnet4" => Testnet4,
             "signet" => Signet,
             "regtest" => Regtest,
             _ => return Err(ParseNetworkError(core_arg.to_owned())),
@@ -128,7 +161,7 @@ impl Network {
     /// let network = Network::Bitcoin;
     /// assert_eq!(network.chain_hash(), ChainHash::BITCOIN);
     /// ```
-    pub fn chain_hash(self) -> ChainHash { ChainHash::using_genesis_block(self) }
+    pub fn chain_hash(self) -> ChainHash { ChainHash::using_genesis_block_const(self) }
 
     /// Creates a `Network` from the chain hash (genesis block hash).
     ///
@@ -137,12 +170,34 @@ impl Network {
     /// ```rust
     /// use bitcoin::Network;
     /// use bitcoin::blockdata::constants::ChainHash;
-    /// use std::convert::TryFrom;
     ///
     /// assert_eq!(Ok(Network::Bitcoin), Network::try_from(ChainHash::BITCOIN));
     /// ```
     pub fn from_chain_hash(chain_hash: ChainHash) -> Option<Network> {
         Network::try_from(chain_hash).ok()
+    }
+
+    /// Returns the associated network parameters.
+    pub const fn params(self) -> &'static Params {
+        match self {
+            Network::Bitcoin => &Params::BITCOIN,
+            Network::Testnet => &Params::TESTNET3,
+            Network::Testnet4 => &Params::TESTNET4,
+            Network::Signet => &Params::SIGNET,
+            Network::Regtest => &Params::REGTEST,
+        }
+    }
+
+    /// Returns a string representation of the `Network` enum variant.
+    /// This is useful for displaying the network type as a string.
+    const fn as_display_str(self) -> &'static str {
+        match self {
+            Network::Bitcoin => "bitcoin",
+            Network::Testnet => "testnet",
+            Network::Testnet4 => "testnet4",
+            Network::Signet => "signet",
+            Network::Regtest => "regtest",
+        }
     }
 }
 
@@ -150,8 +205,6 @@ impl Network {
 pub mod as_core_arg {
     //! Module for serialization/deserialization of network variants into/from Bitcoin Core values
     #![allow(missing_docs)]
-
-    use serde;
 
     use crate::Network;
 
@@ -175,7 +228,7 @@ pub mod as_core_arg {
                 Network::from_core_arg(s).map_err(|_| {
                     E::invalid_value(
                         serde::de::Unexpected::Str(s),
-                        &"bitcoin network encoded as a string (either main, test, signet or regtest)",
+                        &"bitcoin network encoded as a string (either main, test, testnet4, signet or regtest)",
                     )
                 })
             }
@@ -183,7 +236,7 @@ pub mod as_core_arg {
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 write!(
                     formatter,
-                    "bitcoin network encoded as a string (either main, test, signet or regtest)"
+                    "bitcoin network encoded as a string (either main, test, testnet4, signet or regtest)"
                 )
             }
         }
@@ -213,30 +266,21 @@ impl FromStr for Network {
 
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use Network::*;
-
-        let network = match s {
-            "bitcoin" => Bitcoin,
-            "testnet" => Testnet,
-            "signet" => Signet,
-            "regtest" => Regtest,
-            _ => return Err(ParseNetworkError(s.to_owned())),
-        };
-        Ok(network)
+        match s {
+            "bitcoin" => Ok(Network::Bitcoin),
+            // For user-side compatibility, testnet3 is retained as testnet
+            "testnet" => Ok(Network::Testnet),
+            "testnet4" => Ok(Network::Testnet4),
+            "signet" => Ok(Network::Signet),
+            "regtest" => Ok(Network::Regtest),
+            _ => Err(ParseNetworkError(s.to_owned())),
+        }
     }
 }
 
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        use Network::*;
-
-        let s = match *self {
-            Bitcoin => "bitcoin",
-            Testnet => "testnet",
-            Signet => "signet",
-            Regtest => "regtest",
-        };
-        write!(f, "{}", s)
+        write!(f, "{}", self.as_display_str())
     }
 }
 
@@ -263,7 +307,8 @@ impl TryFrom<ChainHash> for Network {
         match chain_hash {
             // Note: any new network entries must be matched against here.
             ChainHash::BITCOIN => Ok(Network::Bitcoin),
-            ChainHash::TESTNET => Ok(Network::Testnet),
+            ChainHash::TESTNET3 => Ok(Network::Testnet),
+            ChainHash::TESTNET4 => Ok(Network::Testnet4),
             ChainHash::SIGNET => Ok(Network::Signet),
             ChainHash::REGTEST => Ok(Network::Regtest),
             _ => Err(UnknownChainHashError(chain_hash)),
@@ -280,12 +325,26 @@ mod tests {
     #[test]
     fn serialize_test() {
         assert_eq!(serialize(&Network::Bitcoin.magic()), &[0xf9, 0xbe, 0xb4, 0xd9]);
-        assert_eq!(serialize(&Network::Testnet.magic()), &[0x0b, 0x11, 0x09, 0x07]);
+        assert_eq!(
+            serialize(&Network::Testnet.magic()),
+            &[0x0b, 0x11, 0x09, 0x07]
+        );
+        assert_eq!(
+            serialize(&Network::Testnet4.magic()),
+            &[0x1c, 0x16, 0x3f, 0x28]
+        );
         assert_eq!(serialize(&Network::Signet.magic()), &[0x0a, 0x03, 0xcf, 0x40]);
         assert_eq!(serialize(&Network::Regtest.magic()), &[0xfa, 0xbf, 0xb5, 0xda]);
 
         assert_eq!(deserialize(&[0xf9, 0xbe, 0xb4, 0xd9]).ok(), Some(Network::Bitcoin.magic()));
-        assert_eq!(deserialize(&[0x0b, 0x11, 0x09, 0x07]).ok(), Some(Network::Testnet.magic()));
+        assert_eq!(
+            deserialize(&[0x0b, 0x11, 0x09, 0x07]).ok(),
+            Some(Network::Testnet.magic())
+        );
+        assert_eq!(
+            deserialize(&[0x1c, 0x16, 0x3f, 0x28]).ok(),
+            Some(Network::Testnet4.magic())
+        );
         assert_eq!(deserialize(&[0x0a, 0x03, 0xcf, 0x40]).ok(), Some(Network::Signet.magic()));
         assert_eq!(deserialize(&[0xfa, 0xbf, 0xb5, 0xda]).ok(), Some(Network::Regtest.magic()));
     }
@@ -294,11 +353,13 @@ mod tests {
     fn string_test() {
         assert_eq!(Network::Bitcoin.to_string(), "bitcoin");
         assert_eq!(Network::Testnet.to_string(), "testnet");
+        assert_eq!(Network::Testnet4.to_string(), "testnet4");
         assert_eq!(Network::Regtest.to_string(), "regtest");
         assert_eq!(Network::Signet.to_string(), "signet");
 
         assert_eq!("bitcoin".parse::<Network>().unwrap(), Network::Bitcoin);
         assert_eq!("testnet".parse::<Network>().unwrap(), Network::Testnet);
+        assert_eq!("testnet4".parse::<Network>().unwrap(), Network::Testnet4);
         assert_eq!("regtest".parse::<Network>().unwrap(), Network::Regtest);
         assert_eq!("signet".parse::<Network>().unwrap(), Network::Signet);
         assert!("fakenet".parse::<Network>().is_err());
@@ -313,6 +374,7 @@ mod tests {
             ServiceFlags::WITNESS,
             ServiceFlags::COMPACT_FILTERS,
             ServiceFlags::NETWORK_LIMITED,
+            ServiceFlags::P2P_V2,
         ];
 
         let mut flags = ServiceFlags::NONE;
@@ -351,6 +413,7 @@ mod tests {
         let tests = vec![
             (Bitcoin, "bitcoin"),
             (Testnet, "testnet"),
+            (Testnet4, "testnet4"),
             (Signet, "signet"),
             (Regtest, "regtest"),
         ];
@@ -372,6 +435,7 @@ mod tests {
         let expected_pairs = [
             (Network::Bitcoin, "main"),
             (Network::Testnet, "test"),
+            (Network::Testnet4, "testnet4"),
             (Network::Regtest, "regtest"),
             (Network::Signet, "signet"),
         ];

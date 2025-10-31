@@ -5,24 +5,29 @@
 //! This module provides support for taproot tagged hashes.
 //!
 
+pub mod merkle_branch;
+pub mod serialized_signature;
+
 use core::cmp::Reverse;
-use core::convert::TryFrom;
 use core::fmt;
 use core::iter::FusedIterator;
 
 use hashes::{sha256t_hash_newtype, Hash, HashEngine};
 use internals::write_err;
-use secp256k1::{self, Scalar, Secp256k1};
+use io::Write;
+use secp256k1::{Scalar, Secp256k1};
 
 use crate::consensus::Encodable;
 use crate::crypto::key::{TapTweak, TweakedPublicKey, UntweakedPublicKey, XOnlyPublicKey};
 use crate::prelude::*;
-use crate::{io, Script, ScriptBuf};
+use crate::{Script, ScriptBuf};
 
 // Re-export these so downstream only has to use one `taproot` module.
 #[rustfmt::skip]
 #[doc(inline)]
 pub use crate::crypto::taproot::{SigFromSliceError, Signature};
+#[doc(inline)]
+pub use merkle_branch::TaprootMerkleBranch;
 
 // Taproot test vectors from BIP-341 state the hashes without any reversing
 sha256t_hash_newtype! {
@@ -153,7 +158,16 @@ pub const TAPROOT_CONTROL_BASE_SIZE: usize = 33;
 pub const TAPROOT_CONTROL_MAX_SIZE: usize =
     TAPROOT_CONTROL_BASE_SIZE + TAPROOT_CONTROL_NODE_SIZE * TAPROOT_CONTROL_MAX_NODE_COUNT;
 
-// type alias for versioned tap script corresponding merkle proof
+/// The leaf script with its version.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct LeafScript<S> {
+    /// The version of the script.
+    pub version: LeafVersion,
+    /// The script, usually `ScriptBuf` or `&Script`.
+    pub script: S,
+}
+
+// type alias for versioned tap script corresponding Merkle proof
 type ScriptMerkleProofMap = BTreeMap<(ScriptBuf, LeafVersion), BTreeSet<TaprootMerkleBranch>>;
 
 /// Represents taproot spending information.
@@ -305,7 +319,7 @@ impl TaprootSpendInfo {
         // Choose the smallest one amongst the multiple script maps
         let smallest = merkle_branch_set
             .iter()
-            .min_by(|x, y| x.0.len().cmp(&y.0.len()))
+            .min_by(|x, y| x.len().cmp(&y.len()))
             .expect("Invariant: ScriptBuf map key must contain non-empty set value");
         Some(ControlBlock {
             internal_key: self.internal_key,
@@ -582,6 +596,8 @@ pub enum IncompleteBuilderError {
     HiddenParts(TaprootBuilder),
 }
 
+internals::impl_from_infallible!(IncompleteBuilderError);
+
 impl IncompleteBuilderError {
     /// Converts error into the original incomplete [`TaprootBuilder`] instance.
     pub fn into_builder(self) -> TaprootBuilder {
@@ -625,6 +641,8 @@ pub enum HiddenNodesError {
     /// Indicates an attempt to construct a tap tree from a builder containing hidden parts.
     HiddenParts(NodeInfo),
 }
+
+internals::impl_from_infallible!(HiddenNodesError);
 
 impl HiddenNodesError {
     /// Converts error into the original incomplete [`NodeInfo`] instance.
@@ -688,6 +706,9 @@ impl TapTree {
     /// Returns [`TapTreeIter<'_>`] iterator for a taproot script tree, operating in DFS order over
     /// tree [`ScriptLeaf`]s.
     pub fn script_leaves(&self) -> ScriptLeaves { ScriptLeaves { leaf_iter: self.0.leaf_nodes() } }
+
+    /// Returns the root [`TapNodeHash`] of this tree.
+    pub fn root_hash(&self) -> TapNodeHash { self.0.hash }
 }
 
 impl TryFrom<TaprootBuilder> for TapTree {
@@ -837,6 +858,9 @@ impl NodeInfo {
 
     /// Creates an iterator over all leaves (including hidden leaves) in the tree.
     pub fn leaf_nodes(&self) -> LeafNodes { LeafNodes { leaf_iter: self.leaves.iter() } }
+
+    /// Returns the root [`TapNodeHash`] of this node info.
+    pub fn node_hash(&self) -> TapNodeHash { self.hash }
 }
 
 impl TryFrom<TaprootBuilder> for NodeInfo {
@@ -962,19 +986,19 @@ pub struct LeafNode {
 impl LeafNode {
     /// Creates an new [`ScriptLeaf`] from `script` and `ver` and no merkle branch.
     pub fn new_script(script: ScriptBuf, ver: LeafVersion) -> Self {
-        Self { leaf: TapLeaf::Script(script, ver), merkle_branch: TaprootMerkleBranch(vec![]) }
+        Self { leaf: TapLeaf::Script(script, ver), merkle_branch: Default::default() }
     }
 
     /// Creates an new [`ScriptLeaf`] from `hash` and no merkle branch.
     pub fn new_hidden(hash: TapNodeHash) -> Self {
-        Self { leaf: TapLeaf::Hidden(hash), merkle_branch: TaprootMerkleBranch(vec![]) }
+        Self { leaf: TapLeaf::Hidden(hash), merkle_branch: Default::default() }
     }
 
     /// Returns the depth of this script leaf in the tap tree.
     #[inline]
     pub fn depth(&self) -> u8 {
         // Depth is guarded by TAPROOT_CONTROL_MAX_NODE_COUNT.
-        u8::try_from(self.merkle_branch().0.len()).expect("depth is guaranteed to fit in a u8")
+        u8::try_from(self.merkle_branch().len()).expect("depth is guaranteed to fit in a u8")
     }
 
     /// Computes a leaf hash for this [`ScriptLeaf`] if the leaf is known.
@@ -1048,143 +1072,6 @@ impl<'leaf> ScriptLeaf<'leaf> {
     }
 }
 
-/// The merkle proof for inclusion of a tree in a taptree hash.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]
-#[cfg_attr(feature = "serde", serde(into = "Vec<TapNodeHash>"))]
-#[cfg_attr(feature = "serde", serde(try_from = "Vec<TapNodeHash>"))]
-pub struct TaprootMerkleBranch(Vec<TapNodeHash>);
-
-impl TaprootMerkleBranch {
-    /// Returns a reference to the inner vector of hashes.
-    pub fn as_inner(&self) -> &[TapNodeHash] { &self.0 }
-
-    /// Returns the number of nodes in this merkle proof.
-    pub fn len(&self) -> usize { self.0.len() }
-
-    /// Checks if this merkle proof is empty.
-    pub fn is_empty(&self) -> bool { self.0.is_empty() }
-
-    /// Decodes bytes from control block.
-    ///
-    /// This reads the branch as encoded in the control block: the concatenated 32B byte chunks -
-    /// one for each hash.
-    ///
-    /// # Errors
-    ///
-    /// The function returns an error if the the number of bytes is not an integer multiple of 32 or
-    /// if the number of hashes exceeds 128.
-    pub fn decode(sl: &[u8]) -> Result<Self, TaprootError> {
-        if sl.len() % TAPROOT_CONTROL_NODE_SIZE != 0 {
-            Err(TaprootError::InvalidMerkleBranchSize(sl.len()))
-        } else if sl.len() > TAPROOT_CONTROL_NODE_SIZE * TAPROOT_CONTROL_MAX_NODE_COUNT {
-            Err(TaprootError::InvalidMerkleTreeDepth(sl.len() / TAPROOT_CONTROL_NODE_SIZE))
-        } else {
-            let inner = sl
-                .chunks_exact(TAPROOT_CONTROL_NODE_SIZE)
-                .map(|chunk| {
-                    TapNodeHash::from_slice(chunk)
-                        .expect("chunks_exact always returns the correct size")
-                })
-                .collect();
-
-            Ok(TaprootMerkleBranch(inner))
-        }
-    }
-
-    /// Creates a merkle proof from list of hashes.
-    ///
-    /// # Errors
-    /// If inner proof length is more than [`TAPROOT_CONTROL_MAX_NODE_COUNT`] (128).
-    fn from_collection<T: AsRef<[TapNodeHash]> + Into<Vec<TapNodeHash>>>(
-        collection: T,
-    ) -> Result<Self, TaprootError> {
-        if collection.as_ref().len() > TAPROOT_CONTROL_MAX_NODE_COUNT {
-            Err(TaprootError::InvalidMerkleTreeDepth(collection.as_ref().len()))
-        } else {
-            Ok(TaprootMerkleBranch(collection.into()))
-        }
-    }
-
-    /// Serializes to a writer.
-    ///
-    /// # Returns
-    ///
-    /// The number of bytes written to the writer.
-    pub fn encode<Write: io::Write>(&self, mut writer: Write) -> io::Result<usize> {
-        for hash in self.0.iter() {
-            writer.write_all(hash.as_ref())?;
-        }
-        Ok(self.0.len() * TapNodeHash::LEN)
-    }
-
-    /// Serializes `self` as bytes.
-    pub fn serialize(&self) -> Vec<u8> {
-        self.0.iter().flat_map(|e| e.as_byte_array()).copied().collect::<Vec<u8>>()
-    }
-
-    /// Appends elements to proof.
-    fn push(&mut self, h: TapNodeHash) -> Result<(), TaprootBuilderError> {
-        if self.0.len() >= TAPROOT_CONTROL_MAX_NODE_COUNT {
-            Err(TaprootBuilderError::InvalidMerkleTreeDepth(self.0.len()))
-        } else {
-            self.0.push(h);
-            Ok(())
-        }
-    }
-
-    /// Returns the inner list of hashes.
-    pub fn into_inner(self) -> Vec<TapNodeHash> { self.0 }
-}
-
-macro_rules! impl_try_from {
-    ($from:ty) => {
-        impl TryFrom<$from> for TaprootMerkleBranch {
-            type Error = TaprootError;
-
-            /// Creates a merkle proof from list of hashes.
-            ///
-            /// # Errors
-            /// If inner proof length is more than [`TAPROOT_CONTROL_MAX_NODE_COUNT`] (128).
-            fn try_from(v: $from) -> Result<Self, Self::Error> {
-                TaprootMerkleBranch::from_collection(v)
-            }
-        }
-    };
-}
-impl_try_from!(&[TapNodeHash]);
-impl_try_from!(Vec<TapNodeHash>);
-impl_try_from!(Box<[TapNodeHash]>);
-
-macro_rules! impl_try_from_array {
-    ($($len:expr),* $(,)?) => {
-        $(
-            impl From<[TapNodeHash; $len]> for TaprootMerkleBranch {
-                fn from(a: [TapNodeHash; $len]) -> Self {
-                    Self(a.to_vec())
-                }
-            }
-        )*
-    }
-}
-// Implement for all values [0, 128] inclusive.
-//
-// The reason zero is included is that `TaprootMerkleBranch` doesn't contain the hash of the node
-// that's being proven - it's not needed because the script is already right before control block.
-impl_try_from_array!(
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
-    98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116,
-    117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128
-);
-
-impl From<TaprootMerkleBranch> for Vec<TapNodeHash> {
-    fn from(branch: TaprootMerkleBranch) -> Self { branch.0 }
-}
-
 /// Control block data structure used in Tapscript satisfaction.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -1210,7 +1097,6 @@ impl ControlBlock {
     /// # Errors
     ///
     /// - [`TaprootError::InvalidControlBlockSize`] if `sl` is not of size 1 + 32 + 32N for any N >= 0.
-    /// - [`TaprootError::InvalidParity`] if first byte of `sl` is not a valid output key parity.
     /// - [`TaprootError::InvalidTaprootLeafVersion`] if first byte of `sl` is not a valid leaf version.
     /// - [`TaprootError::InvalidInternalKey`] if internal key is invalid (first 32 bytes after the parity byte).
     /// - [`TaprootError::InvalidMerkleTreeDepth`] if merkle tree is too deep (more than 128 levels).
@@ -1220,8 +1106,11 @@ impl ControlBlock {
         {
             return Err(TaprootError::InvalidControlBlockSize(sl.len()));
         }
-        let output_key_parity =
-            secp256k1::Parity::from_i32((sl[0] & 1) as i32).map_err(TaprootError::InvalidParity)?;
+        let output_key_parity = match sl[0] & 1 {
+            0 => secp256k1::Parity::Even,
+            _ => secp256k1::Parity::Odd,
+        };
+
         let leaf_version = LeafVersion::from_consensus(sl[0] & TAPROOT_LEAF_MASK)?;
         let internal_key = UntweakedPublicKey::from_slice(&sl[1..TAPROOT_CONTROL_BASE_SIZE])
             .map_err(TaprootError::InvalidInternalKey)?;
@@ -1232,7 +1121,7 @@ impl ControlBlock {
     /// Returns the size of control block. Faster and more efficient than calling
     /// `Self::serialize().len()`. Can be handy for fee estimation.
     pub fn size(&self) -> usize {
-        TAPROOT_CONTROL_BASE_SIZE + TAPROOT_CONTROL_NODE_SIZE * self.merkle_branch.as_inner().len()
+        TAPROOT_CONTROL_BASE_SIZE + TAPROOT_CONTROL_NODE_SIZE * self.merkle_branch.len()
     }
 
     /// Serializes to a writer.
@@ -1240,12 +1129,12 @@ impl ControlBlock {
     /// # Returns
     ///
     /// The number of bytes written to the writer.
-    pub fn encode<Write: io::Write>(&self, mut writer: Write) -> io::Result<usize> {
+    pub fn encode<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
         let first_byte: u8 =
             i32::from(self.output_key_parity) as u8 | self.leaf_version.to_consensus();
         writer.write_all(&[first_byte])?;
         writer.write_all(&self.internal_key.serialize())?;
-        self.merkle_branch.encode(&mut writer)?;
+        self.merkle_branch.encode(writer)?;
         Ok(self.size())
     }
 
@@ -1274,7 +1163,7 @@ impl ControlBlock {
         // Initially the curr_hash is the leaf hash
         let mut curr_hash = TapNodeHash::from_script(script, self.leaf_version);
         // Verify the proof
-        for elem in self.merkle_branch.as_inner() {
+        for elem in &self.merkle_branch {
             // Recalculate the curr hash as parent hash
             curr_hash = TapNodeHash::from_node_hashes(curr_hash, *elem);
         }
@@ -1448,6 +1337,8 @@ pub enum TaprootBuilderError {
     EmptyTree,
 }
 
+internals::impl_from_infallible!(TaprootBuilderError);
+
 impl fmt::Display for TaprootBuilderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use TaprootBuilderError::*;
@@ -1504,11 +1395,11 @@ pub enum TaprootError {
     InvalidControlBlockSize(usize),
     /// Invalid taproot internal key.
     InvalidInternalKey(secp256k1::Error),
-    /// Invalid parity for internal key.
-    InvalidParity(secp256k1::InvalidParityValue),
     /// Empty tap tree.
     EmptyTree,
 }
+
+internals::impl_from_infallible!(TaprootError);
 
 impl fmt::Display for TaprootError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1536,7 +1427,6 @@ impl fmt::Display for TaprootError {
             InvalidInternalKey(ref e) => {
                 write_err!(f, "invalid internal x-only key"; e)
             }
-            InvalidParity(_) => write!(f, "invalid parity value for internal key"),
             EmptyTree => write!(f, "Taproot Tree must contain at least one script"),
         }
     }
@@ -1553,7 +1443,6 @@ impl std::error::Error for TaprootError {
             | InvalidMerkleTreeDepth(_)
             | InvalidTaprootLeafVersion(_)
             | InvalidControlBlockSize(_)
-            | InvalidParity(_)
             | EmptyTree => None,
         }
     }
@@ -1563,15 +1452,15 @@ impl std::error::Error for TaprootError {
 mod test {
     use core::str::FromStr;
 
+    use hashes::sha256;
     use hashes::sha256t::Tag;
-    use hashes::{sha256, Hash, HashEngine};
     use hex::FromHex;
-    use secp256k1::{VerifyOnly, XOnlyPublicKey};
+    use secp256k1::VerifyOnly;
 
     use super::*;
     use crate::sighash::{TapSighash, TapSighashTag};
-    use crate::{Address, Network};
-    extern crate serde_json;
+    use crate::{Address, KnownHrp};
+    use serde_json;
 
     #[cfg(feature = "serde")]
     use {
@@ -1667,7 +1556,7 @@ mod test {
         let control_block =
             ControlBlock::decode(&Vec::<u8>::from_hex(control_block_hex).unwrap()).unwrap();
         assert_eq!(control_block_hex, control_block.serialize().to_lower_hex_string());
-        assert!(control_block.verify_taproot_commitment(secp, out_pk.to_inner(), &script));
+        assert!(control_block.verify_taproot_commitment(secp, out_pk.to_x_only_public_key(), &script));
     }
 
     #[test]
@@ -1761,7 +1650,6 @@ mod test {
                     .iter()
                     .next()
                     .expect("Present Path")
-                    .0
                     .len()
             );
         }
@@ -1775,7 +1663,7 @@ mod test {
             let ctrl_block = tree_info.control_block(&ver_script).unwrap();
             assert!(ctrl_block.verify_taproot_commitment(
                 &secp,
-                output_key.to_inner(),
+                output_key.to_x_only_public_key(),
                 &ver_script.0
             ))
         }
@@ -1845,12 +1733,12 @@ mod test {
         let tree_info = builder.finalize(&secp, internal_key).unwrap();
         let output_key = tree_info.output_key();
 
-        for script in vec![a, b, c, d, e] {
+        for script in [a, b, c, d, e] {
             let ver_script = (script, LeafVersion::TapScript);
             let ctrl_block = tree_info.control_block(&ver_script).unwrap();
             assert!(ctrl_block.verify_taproot_commitment(
                 &secp,
-                output_key.to_inner(),
+                output_key.to_x_only_public_key(),
                 &ver_script.0
             ))
         }
@@ -1875,7 +1763,7 @@ mod test {
         let hash1 = TapNodeHash::from_slice(&dummy_hash).unwrap();
         let dummy_hash = hex!("8d79dedc2fa0b55167b5d28c61dbad9ce1191a433f3a1a6c8ee291631b2c94c9");
         let hash2 = TapNodeHash::from_slice(&dummy_hash).unwrap();
-        let merkle_branch = TaprootMerkleBranch::from_collection(vec![hash1, hash2]).unwrap();
+        let merkle_branch = TaprootMerkleBranch::from([hash1, hash2]);
         // use serde_test to test serialization and deserialization
         serde_test::assert_tokens(
             &merkle_branch.readable(),
@@ -1963,10 +1851,10 @@ mod test {
 
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
             let (output_key, _parity) = internal_key.tap_tweak(secp, merkle_root);
-            let addr = Address::p2tr(secp, internal_key, merkle_root, Network::Bitcoin);
+            let addr = Address::p2tr(secp, internal_key, merkle_root, KnownHrp::Mainnet);
             let spk = addr.script_pubkey();
 
-            assert_eq!(expected_output_key, output_key.to_inner());
+            assert_eq!(expected_output_key, output_key.to_x_only_public_key());
             assert_eq!(expected_tweak, tweak);
             assert_eq!(expected_addr, addr);
             assert_eq!(expected_spk, spk);
@@ -1974,7 +1862,7 @@ mod test {
     }
 
     fn bip_341_read_json() -> serde_json::Value {
-        let json_str = include_str!("../tests/data/bip341_tests.json");
+        let json_str = include_str!("../../tests/data/bip341_tests.json");
         serde_json::from_str(json_str).expect("JSON was not well-formatted")
     }
 }

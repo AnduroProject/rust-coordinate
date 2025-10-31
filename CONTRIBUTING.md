@@ -18,8 +18,6 @@ changes to this document in a pull request.
   * [Peer review](#peer-review)
   * [Repository maintainers](#repository-maintainers)
 - [Coding conventions](#coding-conventions)
-  * [Formatting](#formatting)
-  * [MSRV](#msrv)
   * [Naming conventions](#naming-conventions)
   * [Upgrading dependencies](#upgrading-dependencies)
   * [Unsafe code](#unsafe-code)
@@ -80,7 +78,7 @@ To contribute a patch, the workflow is a as follows:
 2. Create topic branch
 3. Commit patches
 
-Please keep commits should atomic and diffs easy to read. For this reason
+Please keep commits atomic and diffs easy to read. For this reason
 do not mix any formatting fixes or code moves with actual code changes.
 Further, each commit, individually, should compile and pass tests, in order to
 ensure git bisect and other automated tools function properly.
@@ -92,12 +90,6 @@ to split it into multiple small, focused PRs.
 
 Commits should cover both the issue fixed and the solution's rationale.
 Please keep these [guidelines](https://chris.beams.io/posts/git-commit/) in mind.
-
-To facilitate communication with other contributors, the project is making use
-of GitHub's "assignee" field. First check that no one is assigned and then
-comment suggesting that you're working on it. If someone is already assigned,
-don't hesitate to ask if the assigned party or previous commenters are still
-working on it if it has been awhile.
 
 
 ## Preparing PRs
@@ -126,18 +118,11 @@ NB: reviewers may run more complex test/CI scripts, thus, satisfying all the
 requirements above is just a preliminary, but not necessary sufficient step for
 getting the PR accepted as a valid candidate PR for the `master` branch.
 
-PR authors may also find it useful to run the following script locally in order
-to check that each of the commits within the PR satisfies the requirements
-above, before submitting the PR to review:
-```shell script
-RUSTUP_TOOLCHAIN=1.41.1 ./contrib/test.sh
-```
-Please replace the value in `RUSTUP_TOOLCHAIN=1.41.1` with the current MSRV from
-[README.md].
+High quality commits help us review and merge you contributions. We attempt to
+adhere to the ideas presented in the following two blog posts:
 
-NB: Please keep in mind that the script above replaces `Cargo.lock` file, which
-is necessary to support current MSRV, incompatible with `stable` and newer cargo
-versions.
+- [How to Write a Git Commit Message](https://cbea.ms/git-commit/)
+- [Write Better Commits, Build Better Projects](https://github.blog/2022-06-30-write-better-commits-build-better-projects/)
 
 ### Peer review
 
@@ -165,32 +150,38 @@ Current list of the project maintainers:
 - [Riccardo Casatta](https://github.com/RCasatta)
 - [Tobin Harding](https://github.com/tcharding)
 
-#### Refactor carve-out
+#### One ACK carve-out
 
 The repository is going through heavy refactoring and "trivial" API redesign
 (eg, rename `Foo::empty` to `Foo::new`) as we push towards API stabilization. As
 such reviewers are either bored or overloaded with notifications, hence we have
 created a carve out to the 2-ACK rule.
 
-A PR may be considered for merge if it has a single ACK and has sat open for at
-least two weeks with no comments, questions, or NACKs.
-
-#### One ACK carve-out
-
 We reserve the right to merge PRs with a single ACK [0], at any time, if they match
 any of the following conditions:
 
-1. PR only touches CI i.e, only changes any of the `test.sh` scripts and/or
+0. PR has a single ACK and has sat open for at least two weeks with no comments,
+   questions, or NACKs.
+1. PR only touches CI i.e, only changes any of the test scripts and/or
    stuff in `.github/workflows`.
 2. Non-content changing documentation fixes i.e., grammar/typos, spelling, full
    stops, capital letters. Any change with more substance must still get two
    ACKs.
 3. Code moves that do not change the API e.g., moving error types to a private
    submodule and re-exporting them from the original module. Must not include
-   any code changes except to import paths. This rule is more restrictive than
-   the refactor carve-out. It requires absolutely no change to the public API.
+   any code changes except to import paths. Requires absolutely no change to the
+   public API.
+4. PR has previously had two ACKs, had minimal changes, and gets a single ACK
+   from Andrew. This call is subjective, gives extra privileges, but also
+   requires extra responsibility/accountability (including running a bunch
+   of local CI checks before merging) [1].
+
+
 
 [0] - Obviously author and ACK'er must not be the same person.
+[1] - The aim is to reduce the burden of re-ACK'ing trivial changes and also
+      alleviate the problem of devs spread around the world in different timezones.
+
 
 ## Coding conventions
 
@@ -255,6 +246,49 @@ pub use {
 }
 ```
 
+#### Return `Self`
+
+Use `Self` as the return type instead of naming the type. When constructing the return value use
+`Self` or the type name, whichever you prefer.
+
+```rust
+/// A counter that is always smaller than 100.
+pub struct Counter(u32);
+
+impl Counter {
+    /// Constructs a new `Counter`.
+    pub fn new() -> Self { Self(0) }
+
+    /// Returns a counter if it is possible to create one from x.
+    pub fn maybe(x: u32) -> Option<Self> {
+        match x {
+            x if x >= 100 => None,
+            c => Some(Counter(c)),
+        }
+    }
+}
+
+impl TryFrom<u32> for Counter {
+    type Error = TooBigError;
+
+    fn try_from(x: u32) -> Result<Self, Self::Error> {
+        if x >= 100 {
+            return Err(TooBigError);
+        }
+        Ok(Counter(x))
+    }
+}
+```
+
+When constructing the return value for error enums use `Self`.
+
+```rust
+impl From<foo::Error> for LongDescriptiveError {
+    fn from(e: foo::Error) -> Self { Self::Foo(e) }
+}
+```
+
+
 #### Errors
 
 Return as much context as possible with errors e.g., if an error was encountered parsing a string
@@ -268,6 +302,7 @@ More specifically an error should
 - derive `Debug, Clone, PartialEq, Eq` (and `Copy` iff not `non_exhaustive`).
 - implement Display using `write_err!()` macro if a variant contains an inner error source.
 - have `Error` suffix
+- call `internals::impl_from_infallible!
 - implement `std::error::Error` if they are public (feature gated on "std").
 
 ```rust
@@ -280,6 +315,9 @@ pub enum Error {
     /// Documentation for variant B.
     B,
 }
+
+internals::impl_from_infallible!(Error);
+
 ```
 
 
@@ -335,6 +373,27 @@ Add Panics section if any input to the function can trigger a panic.
 Generally we prefer to have non-panicking APIs but it is impractical in some cases. If you're not
 sure, feel free to ask. If we determine panicking is more practical it must be documented. Internal
 panics that could theoretically occur because of bugs in our code must not be documented.
+
+
+#### Derives
+
+We try to use standard set of derives if it makes sense:
+
+```
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum Foo {
+    Bar,
+    Baz,
+}
+```
+
+For types that do should not form a total or partial order, or that technically do but it does not
+make sense to compare them, we use the `Ordered` trait from the
+[`ordered`](https://crates.io/crates/ordered) crate. See `absolute::LockTime` for an example.
+
+For error types you likely want to use `#[derive(Debug, Clone, PartialEq, Eq)]`.
+
+See [Errors](#errors) section.
 
 
 #### Attributes

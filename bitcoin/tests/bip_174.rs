@@ -1,10 +1,9 @@
 //! Tests PSBT integration vectors from BIP 174
 //! defined at <https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#test-vectors>
 
-use core::convert::TryFrom;
 use std::collections::BTreeMap;
 use std::str::FromStr;
-use bitcoin::hashes::Hash;
+
 use bitcoin::bip32::{Fingerprint, IntoDerivationPath, KeySource, Xpriv, Xpub};
 use bitcoin::blockdata::opcodes::OP_0;
 use bitcoin::blockdata::{script, transaction};
@@ -12,13 +11,11 @@ use bitcoin::consensus::encode::{deserialize, serialize_hex};
 use bitcoin::hex::FromHex;
 use bitcoin::psbt::{Psbt, PsbtSighashType};
 use bitcoin::script::PushBytes;
-use bitcoin::secp256k1::{self, Secp256k1};
+use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{
-    absolute, Amount, Denomination, Network, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence,
-    Transaction, TxIn, TxOut, Witness, Txid,
+    absolute, Amount, Denomination, NetworkKind, OutPoint, PrivateKey, PublicKey, ScriptBuf,
+    Sequence, Transaction, TxIn, TxOut, Witness,
 };
-
-const NETWORK: Network = Network::Testnet;
 
 #[track_caller]
 fn hex_psbt(s: &str) -> Psbt {
@@ -66,8 +63,8 @@ fn bip174_psbt_workflow() {
 
     // Strings from BIP 174 test vector.
     let test_vector = vec![
-        ("cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr", "m/0h/0h/0h"), // from_priv, into_derivation_path?
-        ("cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d", "m/0h/0h/2h"),
+        ("cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr", "0h/0h/0h"), // from_priv, into_derivation_path?
+        ("cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d", "0h/0h/2h"),
     ];
 
     // We pass the keys to the signer after doing verification to make explicit
@@ -81,8 +78,8 @@ fn bip174_psbt_workflow() {
 
     // Strings from BIP 174 test vector.
     let test_vector = vec![
-        ("cT7J9YpCwY3AVRFSjN6ukeEeWY6mhpbJPxRaDaP5QTdygQRxP9Au", "m/0h/0h/1h"),
-        ("cNBc3SWUip9PPm1GjRoLEJT6T41iNzCYtD7qro84FMnM5zEqeJsE", "m/0h/0h/3h"),
+        ("cT7J9YpCwY3AVRFSjN6ukeEeWY6mhpbJPxRaDaP5QTdygQRxP9Au", "0h/0h/1h"),
+        ("cNBc3SWUip9PPm1GjRoLEJT6T41iNzCYtD7qro84FMnM5zEqeJsE", "0h/0h/3h"),
     ];
 
     let keys = parse_and_verify_keys(&ext_priv, &test_vector);
@@ -125,7 +122,7 @@ fn build_extended_private_key() -> Xpriv {
     let xpriv = Xpriv::from_str(extended_private_key).unwrap();
 
     let sk = PrivateKey::from_wif(seed).unwrap();
-    let seeded = Xpriv::new_master(NETWORK, &sk.inner.secret_bytes()).unwrap();
+    let seeded = Xpriv::new_master(NetworkKind::Test, &sk.inner.secret_bytes()).unwrap();
     assert_eq!(xpriv, seeded);
 
     xpriv
@@ -161,12 +158,6 @@ fn create_transaction() -> Transaction {
 
     Transaction {
         version: transaction::Version::TWO,
-        assettype: 0,
-        precision: 0,
-        headline: "".to_string(),
-        ticker: "".to_string(),
-        payload: Txid::all_zeros(),
-        payloaddata: "".to_string(),
         lock_time: absolute::LockTime::ZERO,
         input: vec![
             TxIn {
@@ -231,12 +222,12 @@ fn update_psbt(mut psbt: Psbt, fingerprint: Fingerprint) -> Psbt {
     // Public key and its derivation path (these are the child pubkeys for our `Xpriv`,
     // can be verified by deriving the key using this derivation path).
     let pk_path = vec![
-        ("029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f", "m/0h/0h/0h"),
-        ("02dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d7", "m/0h/0h/1h"),
-        ("03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc", "m/0h/0h/2h"),
-        ("023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e73", "m/0h/0h/3h"),
-        ("03a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca58771", "m/0h/0h/4h"),
-        ("027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b50051096", "m/0h/0h/5h"),
+        ("029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f", "0h/0h/0h"),
+        ("02dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d7", "0h/0h/1h"),
+        ("03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc", "0h/0h/2h"),
+        ("023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e73", "0h/0h/3h"),
+        ("03a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca58771", "0h/0h/4h"),
+        ("027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b50051096", "0h/0h/5h"),
     ];
 
     let expected_psbt_hex = include_str!("data/update_1_psbt_hex");
@@ -462,8 +453,8 @@ fn finalize_psbt(mut psbt: Psbt) -> Psbt {
         let sigs: Vec<_> = psbt.inputs[1].partial_sigs.values().collect();
         let mut script_witness = Witness::new();
         script_witness.push([]); // Push 0x00 to the stack.
-        script_witness.push(&sigs[1].to_vec());
-        script_witness.push(&sigs[0].to_vec());
+        script_witness.push(sigs[1].to_vec());
+        script_witness.push(sigs[0].to_vec());
         script_witness.push(psbt.inputs[1].witness_script.clone().unwrap().as_bytes());
 
         script_witness

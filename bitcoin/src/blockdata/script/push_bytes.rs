@@ -2,7 +2,6 @@
 
 //! Contains `PushBytes` & co
 
-use core::borrow::{Borrow, BorrowMut};
 use core::ops::{Deref, DerefMut};
 
 #[allow(unused)]
@@ -15,11 +14,8 @@ pub use self::primitive::*;
 /// This module only contains required operations so that outside functions wouldn't accidentally
 /// break invariants. Therefore auditing this module should be sufficient.
 mod primitive {
-    use core::convert::{TryFrom, TryInto};
-    #[cfg(rust_v_1_53)]
-    use core::ops::Bound;
     use core::ops::{
-        Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
+        Bound, Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
     };
 
     use super::PushBytesError;
@@ -105,10 +101,9 @@ mod primitive {
         RangeTo<usize>,
         RangeFull,
         RangeInclusive<usize>,
-        RangeToInclusive<usize>
+        RangeToInclusive<usize>,
+        (Bound<usize>, Bound<usize>)
     );
-    #[cfg(rust_v_1_53)]
-    delegate_index!((Bound<usize>, Bound<usize>));
 
     impl Index<usize> for PushBytes {
         type Output = u8;
@@ -185,12 +180,12 @@ mod primitive {
         }
     }
 
-    // Sizes up to 73 to support all pubkey and signature sizes
+    // Sizes up to 76 to support all pubkey and signature sizes
     from_array! {
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
         48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
-        71, 72, 73,
+        71, 72, 73, 74, 75, 76
     }
 
     /// Owned, growable counterpart to `PushBytes`.
@@ -199,7 +194,8 @@ mod primitive {
 
     impl PushBytesBuf {
         /// Creates a new empty `PushBytesBuf`.
-        pub fn new() -> Self { PushBytesBuf(Vec::new()) }
+        #[inline]
+        pub const fn new() -> Self { PushBytesBuf(Vec::new()) }
 
         /// Creates a new empty `PushBytesBuf` with reserved capacity.
         pub fn with_capacity(capacity: usize) -> Self { PushBytesBuf(Vec::with_capacity(capacity)) }

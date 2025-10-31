@@ -23,7 +23,6 @@
 #![cfg(feature = "serde")]
 
 use std::collections::BTreeMap;
-use std::convert::TryFrom;
 use std::str::FromStr;
 
 use bincode::serialize;
@@ -38,7 +37,7 @@ use bitcoin::psbt::{Input, Output, Psbt, PsbtSighashType};
 use bitcoin::sighash::{EcdsaSighashType, TapSighashType};
 use bitcoin::taproot::{self, ControlBlock, LeafVersion, TapTree, TaprootBuilder};
 use bitcoin::{
-    ecdsa, transaction, Address, Amount, Block, Network, OutPoint, PrivateKey, PublicKey,
+    ecdsa, transaction, Address, Amount, Block, NetworkKind, OutPoint, PrivateKey, PublicKey,
     ScriptBuf, Sequence, Target, Transaction, TxIn, TxOut, Txid, Work,
 };
 
@@ -145,7 +144,7 @@ fn serde_regression_witness() {
 fn serde_regression_address() {
     let s = include_str!("data/serde/public_key_hex");
     let pk = PublicKey::from_str(s.trim()).unwrap();
-    let addr = Address::p2pkh(&pk, Network::Bitcoin);
+    let addr = Address::p2pkh(pk, NetworkKind::Main);
 
     let got = serialize(&addr).unwrap();
     let want = include_bytes!("data/serde/address_bincode") as &[_];
@@ -174,8 +173,8 @@ fn serde_regression_extended_pub_key() {
 fn serde_regression_ecdsa_sig() {
     let s = include_str!("data/serde/ecdsa_sig_hex");
     let sig = ecdsa::Signature {
-        sig: secp256k1::ecdsa::Signature::from_str(s.trim()).unwrap(),
-        hash_ty: EcdsaSighashType::All,
+        signature: secp256k1::ecdsa::Signature::from_str(s.trim()).unwrap(),
+        sighash_type: EcdsaSighashType::All,
     };
 
     let got = serialize(&sig).unwrap();
@@ -222,12 +221,6 @@ fn serde_regression_public_key() {
 fn serde_regression_psbt() {
     let tx = Transaction {
         version: transaction::Version::ONE,
-        assettype: 0,
-        precision: 0,
-        headline: "".to_string(),
-        ticker: "".to_string(),
-        payload: Txid::all_zeros(),
-        payloaddata: "".to_string(),
         lock_time: absolute::LockTime::ZERO,
         input: vec![TxIn {
             previous_output: OutPoint {
@@ -252,7 +245,7 @@ fn serde_regression_psbt() {
     };
     let unknown: BTreeMap<raw::Key, Vec<u8>> =
         vec![(raw::Key { type_value: 9, key: vec![0, 1] }, vec![3, 4, 5])].into_iter().collect();
-    let key_source = ("deadbeef".parse().unwrap(), "m/0'/1".parse().unwrap());
+    let key_source = ("deadbeef".parse().unwrap(), "0'/1".parse().unwrap());
     let keypaths: BTreeMap<secp256k1::PublicKey, KeySource> = vec![(
         "0339880dc92394b7355e3d0439fa283c31de7590812ea011c4245c0674a685e883".parse().unwrap(),
         key_source.clone(),
@@ -354,8 +347,8 @@ fn serde_regression_proprietary_key() {
 fn serde_regression_taproot_sig() {
     let s = include_str!("data/serde/taproot_sig_hex");
     let sig = taproot::Signature {
-        sig: secp256k1::schnorr::Signature::from_str(s.trim()).unwrap(),
-        hash_ty: TapSighashType::All,
+        signature: secp256k1::schnorr::Signature::from_str(s.trim()).unwrap(),
+        sighash_type: TapSighashType::All,
     };
 
     let got = serialize(&sig).unwrap();

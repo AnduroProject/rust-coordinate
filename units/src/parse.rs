@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: CC0-1.0
 
-use core::convert::TryFrom;
+//! Parsing utilities.
+
+use alloc::string::String;
 use core::fmt;
 use core::str::FromStr;
 
 use internals::write_err;
-
-use crate::prelude::*;
 
 /// Error with rich context returned when a string can't be parsed as an integer.
 ///
@@ -20,14 +20,14 @@ use crate::prelude::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParseIntError {
-    input: String,
+    pub(crate) input: String,
     // for displaying - see Display impl with nice error message below
     bits: u8,
     // We could represent this as a single bit but it wouldn't actually derease the cost of moving
     // the struct because String contains pointers so there will be padding of bits at least
     // pointer_size - 1 bytes: min 1B in practice.
     is_signed: bool,
-    source: core::num::ParseIntError,
+    pub(crate) source: core::num::ParseIntError,
 }
 
 impl ParseIntError {
@@ -56,12 +56,9 @@ impl AsRef<core::num::ParseIntError> for ParseIntError {
     fn as_ref(&self) -> &core::num::ParseIntError { &self.source }
 }
 
-/// Not strictly neccessary but serves as a lint - avoids weird behavior if someone accidentally
+/// Not strictly necessary but serves as a lint - avoids weird behavior if someone accidentally
 /// passes non-integer to the `parse()` function.
-pub(crate) trait Integer:
-    FromStr<Err = core::num::ParseIntError> + TryFrom<i8> + Sized
-{
-}
+pub trait Integer: FromStr<Err = core::num::ParseIntError> + TryFrom<i8> + Sized {}
 
 macro_rules! impl_integer {
     ($($type:ty),* $(,)?) => {
@@ -77,7 +74,7 @@ impl_integer!(u8, i8, u16, i16, u32, i32, u64, i64, u128, i128);
 ///
 /// If the caller owns `String` or `Box<str>` which is not used later it's better to pass it as
 /// owned since it avoids allocation in error case.
-pub(crate) fn int<T: Integer, S: AsRef<str> + Into<String>>(s: S) -> Result<T, ParseIntError> {
+pub fn int<T: Integer, S: AsRef<str> + Into<String>>(s: S) -> Result<T, ParseIntError> {
     s.as_ref().parse().map_err(|error| {
         ParseIntError {
             input: s.into(),
@@ -91,87 +88,142 @@ pub(crate) fn int<T: Integer, S: AsRef<str> + Into<String>>(s: S) -> Result<T, P
     })
 }
 
-pub(crate) fn hex_u32<S: AsRef<str> + Into<String>>(s: S) -> Result<u32, ParseIntError> {
-    u32::from_str_radix(s.as_ref(), 16).map_err(|error| ParseIntError {
+/// Parses a `u32` from a hex string.
+///
+/// Input string may or may not contain a `0x` prefix.
+pub fn hex_u32<S: AsRef<str> + Into<String>>(s: S) -> Result<u32, ParseIntError> {
+    let stripped = strip_hex_prefix(s.as_ref());
+    u32::from_str_radix(stripped, 16).map_err(|error| ParseIntError {
         input: s.into(),
-        bits: u8::try_from(core::mem::size_of::<u32>() * 8).expect("max is 32 bits for u32"),
-        is_signed: u32::try_from(-1i8).is_ok(),
+        bits: 32,
+        is_signed: false,
         source: error,
     })
 }
 
+/// Parses a `u128` from a hex string.
+///
+/// Input string may or may not contain a `0x` prefix.
+pub fn hex_u128<S: AsRef<str> + Into<String>>(s: S) -> Result<u128, ParseIntError> {
+    let stripped = strip_hex_prefix(s.as_ref());
+    u128::from_str_radix(stripped, 16).map_err(|error| ParseIntError {
+        input: s.into(),
+        bits: 128,
+        is_signed: false,
+        source: error,
+    })
+}
+
+/// Strips the hex prefix off `s` if one is present.
+pub(crate) fn strip_hex_prefix(s: &str) -> &str {
+    if let Some(stripped) = s.strip_prefix("0x") {
+        stripped
+    } else if let Some(stripped) = s.strip_prefix("0X") {
+        stripped
+    } else {
+        s
+    }
+}
+
 /// Implements `TryFrom<$from> for $to` using `parse::int`, mapping the output using infallible
 /// conversion function `fn`.
+#[macro_export]
 macro_rules! impl_tryfrom_str_from_int_infallible {
     ($($from:ty, $to:ident, $inner:ident, $fn:ident);*) => {
         $(
         impl core::convert::TryFrom<$from> for $to {
-            type Error = $crate::error::ParseIntError;
+            type Error = $crate::parse::ParseIntError;
 
-            fn try_from(s: $from) -> Result<Self, Self::Error> {
+            fn try_from(s: $from) -> core::result::Result<Self, Self::Error> {
                 $crate::parse::int::<$inner, $from>(s).map($to::$fn)
             }
         }
         )*
     }
 }
-pub(crate) use impl_tryfrom_str_from_int_infallible;
 
 /// Implements `FromStr` and `TryFrom<{&str, String, Box<str>}> for $to` using `parse::int`, mapping
 /// the output using infallible conversion function `fn`.
 ///
 /// The `Error` type is `ParseIntError`
+#[macro_export]
 macro_rules! impl_parse_str_from_int_infallible {
     ($to:ident, $inner:ident, $fn:ident) => {
-        $crate::parse::impl_tryfrom_str_from_int_infallible!(&str, $to, $inner, $fn; String, $to, $inner, $fn; Box<str>, $to, $inner, $fn);
+        $crate::impl_tryfrom_str_from_int_infallible!(&str, $to, $inner, $fn);
+        #[cfg(feature = "alloc")]
+        $crate::impl_tryfrom_str_from_int_infallible!(alloc::string::String, $to, $inner, $fn; alloc::boxed::Box<str>, $to, $inner, $fn);
 
         impl core::str::FromStr for $to {
-            type Err = $crate::error::ParseIntError;
+            type Err = $crate::parse::ParseIntError;
 
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
+            fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
                 $crate::parse::int::<$inner, &str>(s).map($to::$fn)
             }
         }
-
     }
 }
-pub(crate) use impl_parse_str_from_int_infallible;
 
-/// Implements `TryFrom<$from> for $to` using `parse::int`, mapping the output using fallible
-/// conversion function `fn`.
-macro_rules! impl_tryfrom_str_from_int_fallible {
-    ($($from:ty, $to:ident, $inner:ident, $fn:ident, $err:ident);*) => {
+/// Implements `TryFrom<$from> for $to`.
+#[macro_export]
+macro_rules! impl_tryfrom_str {
+    ($($from:ty, $to:ty, $err:ty, $inner_fn:expr);*) => {
         $(
-        impl core::convert::TryFrom<$from> for $to {
-            type Error = $err;
+            impl core::convert::TryFrom<$from> for $to {
+                type Error = $err;
 
-            fn try_from(s: $from) -> Result<Self, Self::Error> {
-                let u = $crate::parse::int::<$inner, $from>(s)?;
-                $to::$fn(u)
+                fn try_from(s: $from) -> core::result::Result<Self, Self::Error> {
+                    $inner_fn(s)
+                }
             }
-        }
         )*
     }
 }
-pub(crate) use impl_tryfrom_str_from_int_fallible;
 
-/// Implements `FromStr` and `TryFrom<{&str, String, Box<str>}> for $to` using `parse::int`, mapping
-/// the output using fallible conversion function `fn`.
-///
-/// The `Error` type is `ParseIntError`
-macro_rules! impl_parse_str_from_int_fallible {
-    ($to:ident, $inner:ident, $fn:ident, $err:ident) => {
-        $crate::parse::impl_tryfrom_str_from_int_fallible!(&str, $to, $inner, $fn, $err; String, $to, $inner, $fn, $err; Box<str>, $to, $inner, $fn, $err);
+/// Implements standard parsing traits for `$type` by calling into `$inner_fn`.
+#[macro_export]
+macro_rules! impl_parse_str {
+    ($to:ty, $err:ty, $inner_fn:expr) => {
+        $crate::impl_tryfrom_str!(&str, $to, $err, $inner_fn; String, $to, $err, $inner_fn; Box<str>, $to, $err, $inner_fn);
 
         impl core::str::FromStr for $to {
             type Err = $err;
 
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                let u = $crate::parse::int::<$inner, &str>(s)?;
-                $to::$fn(u)
+            fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+                $inner_fn(s)
             }
         }
-
     }
 }
-pub(crate) use impl_parse_str_from_int_fallible;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_u32_from_hex_prefixed() {
+        let want = 171;
+        let got = hex_u32("0xab").expect("failed to parse prefixed hex");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn parse_u32_from_hex_no_prefix() {
+        let want = 171;
+        let got = hex_u32("ab").expect("failed to parse non-prefixed hex");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn parse_u128_from_hex_prefixed() {
+        let want = 3735928559;
+        let got = hex_u128("0xdeadbeef").expect("failed to parse prefixed hex");
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn parse_u128_from_hex_no_prefix() {
+        let want = 3735928559;
+        let got = hex_u128("deadbeef").expect("failed to parse non-prefixed hex");
+        assert_eq!(got, want);
+    }
+}

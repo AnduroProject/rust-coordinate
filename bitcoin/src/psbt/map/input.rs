@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: CC0-1.0
 
-use core::convert::TryFrom;
 use core::fmt;
 use core::str::FromStr;
 
-use hashes::{self, hash160, ripemd160, sha256, sha256d};
+use hashes::{hash160, ripemd160, sha256, sha256d};
 use secp256k1::XOnlyPublicKey;
 
 use crate::bip32::KeySource;
@@ -22,6 +21,7 @@ use crate::sighash::{
     TapSighashType,
 };
 use crate::taproot::{ControlBlock, LeafVersion, TapLeafHash, TapNodeHash};
+use crate::p2tsh::P2tshControlBlock;
 
 /// Type: Non-Witness UTXO PSBT_IN_NON_WITNESS_UTXO = 0x00
 const PSBT_IN_NON_WITNESS_UTXO: u8 = 0x00;
@@ -98,7 +98,6 @@ pub struct Input {
     /// The finalized, fully-constructed scriptWitness with signatures and any
     /// other scripts necessary for this input to pass validation.
     pub final_script_witness: Option<Witness>,
-    /// TODO: Proof of reserves commitment
     /// RIPEMD160 hash to preimage map.
     #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_byte_values"))]
     pub ripemd160_preimages: BTreeMap<ripemd160::Hash, Vec<u8>>,
@@ -119,6 +118,9 @@ pub struct Input {
     /// Map of Control blocks to Script version pair.
     #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
     pub tap_scripts: BTreeMap<ControlBlock, (ScriptBuf, LeafVersion)>,
+    /// Map of Tsh control blocks to Script version pair.
+    #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
+    pub tsh_scripts: BTreeMap<P2tshControlBlock, (ScriptBuf, LeafVersion)>,
     /// Map of tap root x only keys to origin info and leaf hashes contained in it.
     #[cfg_attr(feature = "serde", serde(with = "crate::serde_utils::btreemap_as_seq"))]
     pub tap_key_origins: BTreeMap<XOnlyPublicKey, (Vec<TapLeafHash>, KeySource)>,
@@ -134,10 +136,12 @@ pub struct Input {
     pub unknown: BTreeMap<raw::Key, Vec<u8>>,
 }
 
-/// A Signature hash type for the corresponding input. As of taproot upgrade, the signature hash
-/// type can be either [`EcdsaSighashType`] or [`TapSighashType`] but it is not possible to know
-/// directly which signature hash type the user is dealing with. Therefore, the user is responsible
-/// for converting to/from [`PsbtSighashType`] from/to the desired signature hash type they need.
+/// A Signature hash type for the corresponding input.
+///
+/// As of taproot upgrade, the signature hash type can be either [`EcdsaSighashType`] or
+/// [`TapSighashType`] but it is not possible to know directly which signature hash type the user is
+/// dealing with. Therefore, the user is responsible for converting to/from [`PsbtSighashType`]
+/// from/to the desired signature hash type they need.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(crate = "actual_serde"))]

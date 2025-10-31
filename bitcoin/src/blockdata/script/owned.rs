@@ -3,6 +3,7 @@
 #[cfg(doc)]
 use core::ops::Deref;
 
+use hex::FromHex;
 use secp256k1::{Secp256k1, Verification};
 
 use crate::blockdata::opcodes::all::*;
@@ -32,6 +33,7 @@ pub struct ScriptBuf(pub(in crate::blockdata::script) Vec<u8>);
 
 impl ScriptBuf {
     /// Creates a new empty script.
+    #[inline]
     pub const fn new() -> Self { ScriptBuf(Vec::new()) }
 
     /// Creates a new empty script with pre-allocated capacity.
@@ -140,7 +142,7 @@ impl ScriptBuf {
     /// Does not do any checks on version or program length.
     ///
     /// Convenience method used by `new_p2wpkh`, `new_p2wsh`, `new_p2tr`, and `new_p2tr_tweaked`.
-    fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
+    pub(crate) fn new_witness_program_unchecked<T: AsRef<PushBytes>>(
         version: WitnessVersion,
         program: T,
     ) -> Self {
@@ -151,6 +153,21 @@ impl ScriptBuf {
         Builder::new().push_opcode(version.into()).push_slice(program).into_script()
     }
 
+    /// Creates the script code used for spending a P2WPKH output.
+    ///
+    /// The `scriptCode` is described in [BIP143].
+    ///
+    /// [BIP143]: <https://github.com/bitcoin/bips/blob/99701f68a88ce33b2d0838eb84e115cef505b4c2/bip-0143.mediawiki>
+    pub fn p2wpkh_script_code(wpkh: WPubkeyHash) -> ScriptBuf {
+        Builder::new()
+            .push_opcode(OP_DUP)
+            .push_opcode(OP_HASH160)
+            .push_slice(wpkh)
+            .push_opcode(OP_EQUALVERIFY)
+            .push_opcode(OP_CHECKSIG)
+            .into_script()
+    }
+
     /// Generates OP_RETURN-type of scriptPubkey for the given data.
     pub fn new_op_return<T: AsRef<PushBytes>>(data: T) -> Self {
         Builder::new().push_opcode(OP_RETURN).push_slice(data).into_script()
@@ -158,8 +175,6 @@ impl ScriptBuf {
 
     /// Creates a [`ScriptBuf`] from a hex string.
     pub fn from_hex(s: &str) -> Result<Self, hex::HexToBytesError> {
-        use hex::FromHex;
-
         let v = Vec::from_hex(s)?;
         Ok(ScriptBuf::from_bytes(v))
     }
@@ -213,7 +228,7 @@ impl ScriptBuf {
         self.0.extend_from_slice(data.as_bytes());
     }
 
-    /// Computes the sum of `len` and the lenght of an appropriate push opcode.
+    /// Computes the sum of `len` and the length of an appropriate push opcode.
     pub(in crate::blockdata::script) fn reserved_len_for_slice(len: usize) -> usize {
         len + match len {
             0..=0x4b => 1,
@@ -277,7 +292,7 @@ impl ScriptBuf {
 
     /// Converts this `ScriptBuf` into a [boxed](Box) [`Script`].
     ///
-    /// This method reallocates if the capacity is greater than lenght of the script but should not
+    /// This method reallocates if the capacity is greater than length of the script but should not
     /// when they are equal. If you know beforehand that you need to create a script of exact size
     /// use [`reserve_exact`](Self::reserve_exact) before adding data to the script so that the
     /// reallocation can be avoided.

@@ -19,9 +19,9 @@ use core::cmp::min;
 use core::iter;
 
 use hashes::Hash;
+use io::Write;
 
 use crate::consensus::encode::Encodable;
-use crate::io;
 use crate::prelude::*;
 
 #[rustfmt::skip]
@@ -41,7 +41,7 @@ pub use self::block::{MerkleBlock, MerkleBlockError, PartialMerkleTree};
 pub fn calculate_root_inline<T>(hashes: &mut [T]) -> Option<T>
 where
     T: Hash + Encodable,
-    <T as Hash>::Engine: io::Write,
+    <T as Hash>::Engine: Write,
 {
     match hashes.len() {
         0 => None,
@@ -59,7 +59,7 @@ where
 pub fn calculate_root<T, I>(mut hashes: I) -> Option<T>
 where
     T: Hash + Encodable,
-    <T as Hash>::Engine: io::Write,
+    <T as Hash>::Engine: Write,
     I: Iterator<Item = T>,
 {
     let first = hashes.next()?;
@@ -91,7 +91,7 @@ where
 fn merkle_root_r<T>(hashes: &mut [T]) -> T
 where
     T: Hash + Encodable,
-    <T as Hash>::Engine: io::Write,
+    <T as Hash>::Engine: Write,
 {
     if hashes.len() == 1 {
         return hashes[0];
@@ -125,7 +125,7 @@ mod tests {
         let block: Block = deserialize(&segwit_block[..]).expect("Failed to deserialize block");
         assert!(block.check_merkle_root()); // Sanity check.
 
-        let hashes_iter = block.txdata.iter().map(|obj| obj.txid().to_raw_hash());
+        let hashes_iter = block.txdata.iter().map(|obj| obj.compute_txid().to_raw_hash());
 
         let mut hashes_array: [sha256d::Hash; 15] = [Hash::all_zeros(); 15];
         for (i, hash) in hashes_iter.clone().enumerate() {
