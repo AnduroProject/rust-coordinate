@@ -592,7 +592,7 @@ mod test {
             for tx in block.txdata.iter().skip(1) {
                 for input in tx.input.iter() {
                     txmap.insert(
-                        input.previous_output,
+                        input.previous_output.clone(),
                         ScriptBuf::from(hex!(si.next().unwrap().as_str().unwrap())),
                     );
                 }
@@ -602,7 +602,7 @@ mod test {
                 if let Some(s) = txmap.get(o) {
                     Ok(s.clone())
                 } else {
-                    Err(Error::UtxoMissing(*o))
+                    Err(Error::UtxoMissing(o.clone()))
                 }
             })
             .unwrap();

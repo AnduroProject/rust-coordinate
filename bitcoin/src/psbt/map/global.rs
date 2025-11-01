@@ -6,9 +6,10 @@ use crate::bip32::{ChildNumber, DerivationPath, Fingerprint, Xpub};
 use crate::blockdata::transaction::Transaction;
 use crate::consensus::encode::MAX_VEC_SIZE;
 use crate::consensus::{encode, Decodable};
-use crate::prelude::*;
+use crate::{Txid, prelude::*};
 use crate::psbt::map::Map;
 use crate::psbt::{raw, Error, Psbt};
+use crate::hashes::Hash;
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
 const PSBT_GLOBAL_UNSIGNED_TX: u8 = 0x00;
@@ -95,6 +96,12 @@ impl Psbt {
                                     // properly.
                                     tx = Some(Transaction {
                                         version: Decodable::consensus_decode(&mut decoder)?,
+                                        assettype: 0,
+                                        precision: 0,
+                                        headline: vec![],
+                                        ticker: vec![],
+                                        payload: Txid::all_zeros(),
+                                        payloaddata: vec![],
                                         input: Decodable::consensus_decode(&mut decoder)?,
                                         output: Decodable::consensus_decode(&mut decoder)?,
                                         lock_time: Decodable::consensus_decode(&mut decoder)?,

@@ -221,6 +221,12 @@ fn serde_regression_public_key() {
 fn serde_regression_psbt() {
     let tx = Transaction {
         version: transaction::Version::ONE,
+        assettype: 0,
+        precision: 0,
+        headline: vec![],
+        ticker: vec![],
+        payload: Txid::all_zeros(),
+        payloaddata: vec![],
         lock_time: absolute::LockTime::ZERO,
         input: vec![TxIn {
             previous_output: OutPoint {
@@ -228,6 +234,7 @@ fn serde_regression_psbt() {
                     .parse::<Txid>()
                     .unwrap(),
                 vout: 1,
+                asset_id: vec![]
             },
             script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985")
                 .unwrap(),

@@ -230,9 +230,15 @@ fn generate_bip86_key_spend_tx(
     // CREATOR + UPDATER
     let tx1 = Transaction {
         version: transaction::Version::TWO,
+        assettype: 0,
+        precision: 0,
+        headline: vec![],
+        ticker: vec![],
+        payload: Txid::all_zeros(),
+        payloaddata: vec![],
         lock_time: absolute::LockTime::ZERO,
         input: vec![TxIn {
-            previous_output: OutPoint { txid: input_utxo.txid.parse()?, vout: input_utxo.vout },
+            previous_output: OutPoint { txid: input_utxo.txid.parse()?, vout: input_utxo.vout, asset_id: vec![] },
             script_sig: ScriptBuf::new(),
             sequence: bitcoin::Sequence(0xFFFFFFFF), // Ignore nSequence.
             witness: Witness::default(),
@@ -422,9 +428,15 @@ impl BenefactorWallet {
         // CREATOR + UPDATER
         let next_tx = Transaction {
             version: transaction::Version::TWO,
+            assettype: 0,
+            precision: 0,
+            headline: vec![],
+            ticker: vec![],
+            payload: Txid::all_zeros(),
+            payloaddata: vec![],
             lock_time,
             input: vec![TxIn {
-                previous_output: OutPoint { txid: tx.compute_txid(), vout: 0 },
+                previous_output: OutPoint { txid: tx.compute_txid(), vout: 0, asset_id: vec![] },
                 script_sig: ScriptBuf::new(),
                 sequence: bitcoin::Sequence(0xFFFFFFFD), // enable locktime and opt-in RBF
                 witness: Witness::default(),
@@ -565,9 +577,15 @@ impl BenefactorWallet {
 
             let next_tx = Transaction {
                 version: transaction::Version::TWO,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+                payloaddata: vec![],
                 lock_time,
                 input: vec![TxIn {
-                    previous_output: OutPoint { txid: tx.compute_txid(), vout: 0 },
+                    previous_output: OutPoint { txid: tx.compute_txid(), vout: 0, asset_id: vec![] },
                     script_sig: ScriptBuf::new(),
                     sequence: bitcoin::Sequence(0xFFFFFFFD), // enable locktime and opt-in RBF
                     witness: Witness::default(),

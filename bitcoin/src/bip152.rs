@@ -387,8 +387,14 @@ mod test {
         Transaction {
             version: transaction::Version::ONE,
             lock_time: absolute::LockTime::from_consensus(2),
+            assettype: 0,
+            precision: 0,
+            headline: vec![],
+            ticker: vec![],
+            payload: Txid::all_zeros(),
+            payloaddata: vec![],
             input: vec![TxIn {
-                previous_output: OutPoint::new(Txid::hash(nonce), 0),
+                previous_output: OutPoint::new(Txid::hash(nonce), 0, vec![]),
                 script_sig: ScriptBuf::new(),
                 sequence: Sequence(1),
                 witness: Witness::new(),

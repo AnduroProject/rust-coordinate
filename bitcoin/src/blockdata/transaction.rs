@@ -63,29 +63,31 @@ const SEGWIT_FLAG: u8 = 0x01;
 /// ### Bitcoin Core References
 ///
 /// * [COutPoint definition](https://github.com/bitcoin/bitcoin/blob/345457b542b6a980ccfbc868af0970a6f91d1b82/src/primitives/transaction.h#L26)
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct OutPoint {
     /// The referenced transaction's txid.
     pub txid: Txid,
     /// The index of the referenced output in its transaction's vout.
     pub vout: u32,
+    /// The asset id is combination for block number and asset number within the block
+    pub asset_id: Vec<u8>,
 }
 #[cfg(feature = "serde")]
-crate::serde_utils::serde_struct_human_string_impl!(OutPoint, "an OutPoint", txid, vout);
+crate::serde_utils::serde_struct_human_string_impl!(OutPoint, "an OutPoint", txid, vout, asset_id);
 
 impl OutPoint {
     /// The number of bytes that an outpoint contributes to the size of a transaction.
-    const SIZE: usize = 32 + 4; // The serialized lengths of txid and vout.
+    const SIZE: usize = 32 + 4 + 11; // The serialized lengths of txid and vout.
 
     /// Creates a new [`OutPoint`].
     #[inline]
-    pub const fn new(txid: Txid, vout: u32) -> OutPoint { OutPoint { txid, vout } }
+    pub const fn new(txid: Txid, vout: u32, asset_id:Vec<u8>) -> OutPoint { OutPoint { txid, vout, asset_id } }
 
     /// Creates a "null" `OutPoint`.
     ///
     /// This value is used for coinbase transactions because they don't have any previous outputs.
     #[inline]
-    pub fn null() -> OutPoint { OutPoint { txid: Hash::all_zeros(), vout: u32::MAX } }
+    pub fn null() -> OutPoint { OutPoint { txid: Hash::all_zeros(), vout: u32::MAX, asset_id: vec![] } }
 
     /// Checks if an `OutPoint` is "null".
     ///
@@ -112,7 +114,7 @@ impl Default for OutPoint {
 
 impl fmt::Display for OutPoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.txid, self.vout)
+        write!(f, "{}:{}:{:?}", self.txid, self.vout, self.asset_id)
     }
 }
 
@@ -193,6 +195,7 @@ impl core::str::FromStr for OutPoint {
         Ok(OutPoint {
             txid: s[..colon].parse().map_err(ParseOutPointError::Txid)?,
             vout: parse_vout(&s[colon + 1..])?,
+            asset_id: vec![]
         })
     }
 }
@@ -702,6 +705,18 @@ fn size_from_script_pubkey(script_pubkey: &Script) -> usize {
 pub struct Transaction {
     /// The protocol version, is currently expected to be 1 or 2 (BIP 68).
     pub version: Version,
+    /// Asset type 
+    pub assettype: i32,
+    /// Asset Precision
+    pub precision: i32,
+    /// Asset Symbol 
+    pub ticker: Vec<u8>,
+    /// Asset name 
+    pub headline: Vec<u8>,
+    /// Asset hash for data 
+    pub payload: Txid,
+    /// Asset name 
+    pub payloaddata: Vec<u8>,
     /// Block height or timestamp. Transaction cannot be included in a block until this height/time.
     ///
     /// ### Relevant BIPs
@@ -750,15 +765,22 @@ impl Transaction {
     pub fn compute_ntxid(&self) -> sha256d::Hash {
         let cloned_tx = Transaction {
             version: self.version,
+            assettype: self.assettype,
+            precision: self.precision,
+            headline: self.headline.clone(),
+            ticker: self.ticker.clone(),
+            payload: self.payload,
+            payloaddata: vec![],
             lock_time: self.lock_time,
             input: self
                 .input
                 .iter()
-                .map(|txin| TxIn {
-                    script_sig: ScriptBuf::new(),
-                    witness: Witness::default(),
-                    ..*txin
-                })
+            .map(|txin| TxIn {
+                previous_output: txin.previous_output.clone(),
+                sequence: txin.sequence,
+                script_sig: ScriptBuf::new(),
+                witness: Witness::default(),
+            })
                 .collect(),
             output: self.output.clone(),
         };
@@ -783,6 +805,17 @@ impl Transaction {
     pub fn compute_txid(&self) -> Txid {
         let mut enc = Txid::engine();
         self.version.consensus_encode(&mut enc).expect("engines don't error");
+        if self.version.0 == 10 {
+           self.assettype.consensus_encode(&mut enc).expect("engines don't error");
+           self.precision.consensus_encode(&mut enc).expect("engines don't error");
+           self.ticker.consensus_encode(&mut enc).expect("engines don't error");
+           self.headline.consensus_encode(&mut enc).expect("engines don't error");
+           self.payload.consensus_encode(&mut enc).expect("engines don't error");
+
+           let payload_data = "".to_string();
+           payload_data.consensus_encode(&mut enc).expect("engines don't error");
+        }
+
         self.input.consensus_encode(&mut enc).expect("engines don't error");
         self.output.consensus_encode(&mut enc).expect("engines don't error");
         self.lock_time.consensus_encode(&mut enc).expect("engines don't error");
@@ -806,7 +839,9 @@ impl Transaction {
     #[doc(alias = "wtxid")]
     pub fn compute_wtxid(&self) -> Wtxid {
         let mut enc = Wtxid::engine();
-        self.consensus_encode(&mut enc).expect("engines don't error");
+        let mut tx_details = self.clone();
+        tx_details.payloaddata = "".to_string().as_bytes().to_vec();
+        tx_details.consensus_encode(&mut enc).expect("engines don't error");
         Wtxid::from_engine(enc)
     }
 
@@ -1195,8 +1230,9 @@ impl_consensus_encoding!(TxOut, value, script_pubkey);
 
 impl Encodable for OutPoint {
     fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
-        let len = self.txid.consensus_encode(w)?;
-        Ok(len + self.vout.consensus_encode(w)?)
+        let mut len = self.txid.consensus_encode(w)?;
+        len = len + self.vout.consensus_encode(w)?;
+        Ok(len + self.asset_id.consensus_encode(w)?)
     }
 }
 impl Decodable for OutPoint {
@@ -1204,6 +1240,7 @@ impl Decodable for OutPoint {
         Ok(OutPoint {
             txid: Decodable::consensus_decode(r)?,
             vout: Decodable::consensus_decode(r)?,
+            asset_id: Decodable::consensus_decode(r)?,
         })
     }
 }
@@ -1248,6 +1285,16 @@ impl Encodable for Transaction {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
 
+        if self.version.0 == 10 {
+            len += self.assettype.consensus_encode(w)?;
+            len += self.precision.consensus_encode(w)?;
+            len += self.ticker.consensus_encode(w)?;
+            len += self.headline.consensus_encode(w)?;
+            len += self.payload.consensus_encode(w)?;
+            len += self.payloaddata.consensus_encode(w)?;
+        }
+        
+
         // Legacy transaction serialization format only includes inputs and outputs.
         if !self.uses_segwit_serialization() {
             len += self.input.consensus_encode(w)?;
@@ -1272,6 +1319,20 @@ impl Decodable for Transaction {
         r: &mut R,
     ) -> Result<Self, encode::Error> {
         let version = Version::consensus_decode_from_finite_reader(r)?;
+        let mut assettype = 0;
+        let mut precision = 0;
+        let mut ticker = vec![];
+        let mut headline = vec![];
+        let mut payload = Txid::all_zeros();
+        let mut payloaddata = vec![];
+        if version.0 == 10 {
+           assettype = i32::consensus_decode_from_finite_reader(r)?;
+           precision = i32::consensus_decode_from_finite_reader(r)?;
+           ticker = Vec::<u8>::consensus_decode_from_finite_reader(r)?;
+           headline = Vec::<u8>::consensus_decode_from_finite_reader(r)?;
+           payload = Txid::consensus_decode_from_finite_reader(r)?;
+           payloaddata = Vec::<u8>::consensus_decode_from_finite_reader(r)?;
+        }
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
         // segwit
         if input.is_empty() {
@@ -1289,6 +1350,12 @@ impl Decodable for Transaction {
                     } else {
                         Ok(Transaction {
                             version,
+                            assettype,
+                            precision,
+                            ticker,
+                            headline,
+                            payload,
+                            payloaddata,
                             input,
                             output,
                             lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
@@ -1302,6 +1369,12 @@ impl Decodable for Transaction {
         } else {
             Ok(Transaction {
                 version,
+                assettype,
+                precision,
+                ticker,
+                headline,
+                payload,
+                payloaddata,
                 input,
                 output: Decodable::consensus_decode_from_finite_reader(r)?,
                 lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
@@ -1658,6 +1731,7 @@ impl InputWeightPrediction {
 #[cfg(test)]
 mod tests {
     use core::str::FromStr;
+    use std::vec;
 
     use hex::{test_hex_unwrap as hex, FromHex};
 
@@ -1740,6 +1814,7 @@ mod tests {
                     .parse()
                     .unwrap(),
                 vout: 42,
+                asset_id: vec![]
             })
         );
         assert_eq!(
@@ -1751,6 +1826,7 @@ mod tests {
                     .parse()
                     .unwrap(),
                 vout: 0,
+                 asset_id: vec![]
             })
         );
     }
@@ -2240,6 +2316,12 @@ mod tests {
 
         let empty_transaction_weight = Transaction {
             version: Version::TWO,
+            assettype: 0,
+            precision: 0,
+            headline: vec![],
+            ticker: vec![],
+            payload: Txid::all_zeros(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::ZERO,
             input: vec![],
             output: vec![],

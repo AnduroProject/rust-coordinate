@@ -1285,7 +1285,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::bip32::ChildNumber;
+    use crate::{Txid, bip32::ChildNumber};
     use crate::blockdata::locktime::absolute;
     use crate::blockdata::script::ScriptBuf;
     use crate::blockdata::transaction::{self, OutPoint, Sequence, TxIn};
@@ -1307,6 +1307,12 @@ mod tests {
         Psbt {
             unsigned_tx: Transaction {
                 version: transaction::Version::TWO,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+            payloaddata: vec![],
                 lock_time: absolute::LockTime::ZERO,
                 input: vec![TxIn {
                     previous_output: OutPoint {
@@ -1314,6 +1320,7 @@ mod tests {
                             .parse()
                             .unwrap(),
                         vout: 0,
+                        asset_id: vec![]
                     },
                     script_sig: ScriptBuf::new(),
                     sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
@@ -1351,6 +1358,12 @@ mod tests {
         let psbt = Psbt {
             unsigned_tx: Transaction {
                 version: transaction::Version::TWO,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+                payloaddata: vec![],
                 lock_time: absolute::LockTime::ZERO,
                 input: vec![],
                 output: vec![],
@@ -1467,6 +1480,12 @@ mod tests {
         let expected = Psbt {
             unsigned_tx: Transaction {
                 version: transaction::Version::TWO,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+                payloaddata: vec![],
                 lock_time: absolute::LockTime::from_consensus(1257139),
                 input: vec![TxIn {
                     previous_output: OutPoint {
@@ -1474,6 +1493,7 @@ mod tests {
                             .parse()
                             .unwrap(),
                         vout: 0,
+                        asset_id: vec![]
                     },
                     script_sig: ScriptBuf::new(),
                     sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
@@ -1538,6 +1558,12 @@ mod tests {
         // create some values to use in the PSBT
         let tx = Transaction {
             version: transaction::Version::ONE,
+            assettype: 0,
+            precision: 0,
+            headline: vec![],
+            ticker: vec![],
+            payload: Txid::all_zeros(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::ZERO,
             input: vec![TxIn {
                 previous_output: OutPoint {
@@ -1545,6 +1571,7 @@ mod tests {
                         .parse()
                         .unwrap(),
                     vout: 1,
+                    asset_id: vec![]
                 },
                 script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985")
                     .unwrap(),
@@ -1719,12 +1746,19 @@ mod tests {
             let unserialized = Psbt {
                 unsigned_tx: Transaction {
                     version: transaction::Version::TWO,
+                    assettype: 0,
+                    precision: 0,
+                    headline: vec![],
+                    ticker: vec![],
+                    payload: Txid::all_zeros(),
+                    payloaddata: vec![],
                     lock_time: absolute::LockTime::from_consensus(1257139),
                     input: vec![
                         TxIn {
                             previous_output: OutPoint {
                                 txid: "f61b1742ca13176464adb3cb66050c00787bb3a4eead37e985f2df1e37718126".parse().unwrap(),
                                 vout: 0,
+                                asset_id:  vec![]
                             },
                             script_sig: ScriptBuf::new(),
                             sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
@@ -1751,12 +1785,19 @@ mod tests {
                     Input {
                         non_witness_utxo: Some(Transaction {
                             version: transaction::Version::ONE,
+                            assettype: 0,
+                            precision: 0,
+                            headline: vec![],
+                            ticker: vec![],
+                            payload: Txid::all_zeros(),
+                            payloaddata: vec![],
                             lock_time: absolute::LockTime::ZERO,
                             input: vec![
                                 TxIn {
                                     previous_output: OutPoint {
                                         txid: "e567952fb6cc33857f392efa3a46c995a28f69cca4bb1b37e0204dab1ec7a389".parse().unwrap(),
                                         vout: 1,
+                                        asset_id: vec![]
                                     },
                                     script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985").unwrap(),
                                     sequence: Sequence::MAX,
@@ -1769,6 +1810,7 @@ mod tests {
                                     previous_output: OutPoint {
                                         txid: "b490486aec3ae671012dddb2bb08466bef37720a533a894814ff1da743aaf886".parse().unwrap(),
                                         vout: 1,
+                                        asset_id: vec![]
                                     },
                                     script_sig: ScriptBuf::from_hex("160014fe3e9ef1a745e974d902c4355943abcb34bd5353").unwrap(),
                                     sequence: Sequence::MAX,
@@ -2051,12 +2093,19 @@ mod tests {
         let mut unserialized = Psbt {
             unsigned_tx: Transaction {
                 version: transaction::Version::TWO,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+                payloaddata: vec![],
                 lock_time: absolute::LockTime::from_consensus(1257139),
                 input: vec![
                     TxIn {
                         previous_output: OutPoint {
                             txid: "f61b1742ca13176464adb3cb66050c00787bb3a4eead37e985f2df1e37718126".parse().unwrap(),
                             vout: 0,
+                            asset_id: vec![]
                         },
                         script_sig: ScriptBuf::new(),
                         sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
@@ -2083,12 +2132,19 @@ mod tests {
                 Input {
                     non_witness_utxo: Some(Transaction {
                         version: transaction::Version::ONE,
+                        assettype: 0,
+                        precision: 0,
+                        headline: vec![],
+                        ticker: vec![],
+                        payload: Txid::all_zeros(),
+                        payloaddata: vec![],
                         lock_time: absolute::LockTime::ZERO,
                         input: vec![
                             TxIn {
                                 previous_output: OutPoint {
                                     txid: "e567952fb6cc33857f392efa3a46c995a28f69cca4bb1b37e0204dab1ec7a389".parse().unwrap(),
                                     vout: 1,
+                                    asset_id: vec![]
                                 },
                                 script_sig: ScriptBuf::from_hex("160014be18d152a9b012039daf3da7de4f53349eecb985").unwrap(),
                                 sequence: Sequence::MAX,
@@ -2101,6 +2157,7 @@ mod tests {
                                 previous_output: OutPoint {
                                     txid: "b490486aec3ae671012dddb2bb08466bef37720a533a894814ff1da743aaf886".parse().unwrap(),
                                     vout: 1,
+                                    asset_id: vec![]
                                 },
                                 script_sig: ScriptBuf::from_hex("160014fe3e9ef1a745e974d902c4355943abcb34bd5353").unwrap(),
                                 sequence: Sequence::MAX,
@@ -2256,12 +2313,19 @@ mod tests {
         let mut t = Psbt {
             unsigned_tx: Transaction {
                 version: transaction::Version::TWO,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+                payloaddata: vec![],
                 lock_time: absolute::LockTime::from_consensus(1257139),
                 input: vec![
                     TxIn {
                         previous_output: OutPoint {
                             txid: "f61b1742ca13176464adb3cb66050c00787bb3a4eead37e985f2df1e37718126".parse().unwrap(),
                             vout: 0,
+                            asset_id: vec![]
                         },
                         sequence: Sequence::ENABLE_LOCKTIME_NO_RBF,
                         ..Default::default()
@@ -2287,12 +2351,19 @@ mod tests {
                 Input {
                     non_witness_utxo: Some(Transaction {
                         version: transaction::Version::ONE,
+                        assettype: 0,
+                        precision: 0,
+                        headline: vec![],
+                        ticker: vec![],
+                        payload: Txid::all_zeros(),
+                        payloaddata: vec![],
                         lock_time: absolute::LockTime::ZERO,
                         input: vec![
                             TxIn {
                                 previous_output: OutPoint {
                                     txid: "e567952fb6cc33857f392efa3a46c995a28f69cca4bb1b37e0204dab1ec7a389".parse().unwrap(),
                                     vout: 1,
+                                    asset_id: vec![]
                                 },
                                 sequence: Sequence::MAX,
                                 ..Default::default()
@@ -2301,6 +2372,7 @@ mod tests {
                                 previous_output: OutPoint {
                                     txid: "b490486aec3ae671012dddb2bb08466bef37720a533a894814ff1da743aaf886".parse().unwrap(),
                                     vout: 1,
+                                    asset_id: vec![]
                                 },
                                 sequence: Sequence::MAX,
                                 ..Default::default()

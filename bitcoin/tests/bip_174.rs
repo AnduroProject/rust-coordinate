@@ -13,9 +13,9 @@ use bitcoin::psbt::{Psbt, PsbtSighashType};
 use bitcoin::script::PushBytes;
 use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{
-    absolute, Amount, Denomination, NetworkKind, OutPoint, PrivateKey, PublicKey, ScriptBuf,
-    Sequence, Transaction, TxIn, TxOut, Witness,
+    Amount, Denomination, NetworkKind, OutPoint, PrivateKey, PublicKey, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, absolute
 };
+use bitcoin::hashes::Hash;
 
 #[track_caller]
 fn hex_psbt(s: &str) -> Psbt {
@@ -158,12 +158,19 @@ fn create_transaction() -> Transaction {
 
     Transaction {
         version: transaction::Version::TWO,
+        assettype: 0,
+        precision: 0,
+        headline: vec![],
+        ticker: vec![],
+        payload: Txid::all_zeros(),
+        payloaddata: vec![],
         lock_time: absolute::LockTime::ZERO,
         input: vec![
             TxIn {
                 previous_output: OutPoint {
                     txid: input_0.txid.parse().expect("failed to parse txid"),
                     vout: input_0.index,
+                    asset_id: vec![]
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: Sequence::MAX, // Disable nSequence.
@@ -173,6 +180,7 @@ fn create_transaction() -> Transaction {
                 previous_output: OutPoint {
                     txid: input_1.txid.parse().expect("failed to parse txid"),
                     vout: input_1.index,
+                    asset_id: vec![]
                 },
                 script_sig: ScriptBuf::new(),
                 sequence: Sequence::MAX,

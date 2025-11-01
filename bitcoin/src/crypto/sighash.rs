@@ -19,7 +19,7 @@ use io::Write;
 
 use crate::blockdata::witness::Witness;
 use crate::consensus::{encode, Encodable};
-use crate::prelude::*;
+use crate::{Txid, prelude::*};
 use crate::taproot::{LeafVersion, TapLeafHash, TAPROOT_ANNEX_PREFIX};
 use crate::{transaction, Amount, Script, ScriptBuf, Sequence, Transaction, TxIn, TxOut};
 
@@ -935,6 +935,12 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
             // Build tx to sign
             let mut tx = Transaction {
                 version: self_.version,
+                assettype: 0,
+                precision: 0,
+                headline: vec![],
+                ticker: vec![],
+                payload: Txid::all_zeros(),
+                payloaddata: vec![],
                 lock_time: self_.lock_time,
                 input: vec![],
                 output: vec![],
@@ -942,7 +948,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
             // Add all inputs necessary..
             if anyone_can_pay {
                 tx.input = vec![TxIn {
-                    previous_output: self_.input[input_index].previous_output,
+                    previous_output: self_.input[input_index].previous_output.clone(),
                     script_sig: script_pubkey.to_owned(),
                     sequence: self_.input[input_index].sequence,
                     witness: Witness::default(),
@@ -951,7 +957,7 @@ impl<R: Borrow<Transaction>> SighashCache<R> {
                 tx.input = Vec::with_capacity(self_.input.len());
                 for (n, input) in self_.input.iter().enumerate() {
                     tx.input.push(TxIn {
-                        previous_output: input.previous_output,
+                        previous_output: input.previous_output.clone(),
                         script_sig: if n == input_index {
                             script_pubkey.to_owned()
                         } else {
@@ -1466,6 +1472,12 @@ mod tests {
         // We need a tx with more inputs than outputs.
         let tx = Transaction {
             version: transaction::Version::ONE,
+            assettype: 0,
+            precision: 0,
+            headline: vec![],
+            ticker: vec![],
+            payload: Txid::all_zeros(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::ZERO,
             input: vec![TxIn::default(), TxIn::default()],
             output: vec![TxOut::NULL],
@@ -1661,6 +1673,12 @@ mod tests {
 
         let dumb_tx = Transaction {
             version: transaction::Version::TWO,
+            assettype: 0,
+            precision: 0,
+            headline: vec![],
+            ticker: vec![],
+            payload: Txid::all_zeros(),
+            payloaddata: vec![],
             lock_time: absolute::LockTime::ZERO,
             input: vec![TxIn::default()],
             output: vec![],

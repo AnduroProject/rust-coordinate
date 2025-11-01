@@ -51,6 +51,12 @@ fn main() {
     // The transaction we want to sign and broadcast.
     let mut unsigned_tx = Transaction {
         version: transaction::Version::TWO,  // Post BIP-68.
+        assettype: 0,
+        precision: 0,
+        headline: vec![],
+        ticker: vec![],
+        payload: Txid::all_zeros(),
+        payloaddata: vec![],
         lock_time: absolute::LockTime::ZERO, // Ignore the locktime.
         input: vec![input],                  // Input goes into index 0.
         output: vec![spend, change],         // Outputs, order does not matter.
@@ -117,6 +123,7 @@ fn dummy_unspent_transaction_output(wpkh: &WPubkeyHash) -> (OutPoint, TxOut) {
     let out_point = OutPoint {
         txid: Txid::all_zeros(), // Obviously invalid.
         vout: 0,
+        asset_id: vec![]
     };
 
     let utxo = TxOut { value: DUMMY_UTXO_AMOUNT, script_pubkey };
