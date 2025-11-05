@@ -214,11 +214,11 @@ impl KnownHrp {
 
     /// Creates a `KnownHrp` from a [`bech32::Hrp`].
     fn from_hrp(hrp: Hrp) -> Result<Self, UnknownHrpError> {
-        if hrp == bech32::hrp::BC {
+        if hrp == Hrp::parse_unchecked("cc") || hrp == Hrp::parse_unchecked("CC")  {
             Ok(Self::Mainnet)
-        } else if hrp.is_valid_on_testnet() || hrp.is_valid_on_signet() {
+        } else if hrp == Hrp::parse_unchecked("tc") || hrp == Hrp::parse_unchecked("TC") {
             Ok(Self::Testnets)
-        } else if hrp == bech32::hrp::BCRT {
+        } else if hrp == Hrp::parse_unchecked("ccrt") || hrp == Hrp::parse_unchecked("CCRT") {
             Ok(Self::Regtest)
         } else {
             Err(UnknownHrpError(hrp.to_lowercase()))
@@ -228,9 +228,9 @@ impl KnownHrp {
     /// Converts, infallibly a known HRP to a [`bech32::Hrp`].
     fn to_hrp(self) -> Hrp {
         match self {
-            Self::Mainnet => bech32::hrp::BC,
-            Self::Testnets => bech32::hrp::TB,
-            Self::Regtest => bech32::hrp::BCRT,
+            Self::Mainnet => Hrp::parse_unchecked("cc"),
+            Self::Testnets =>Hrp::parse_unchecked("tc"),
+            Self::Regtest => Hrp::parse_unchecked("ccrt"),
         }
     }
 }
