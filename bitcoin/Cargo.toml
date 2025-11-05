@@ -1,5 +1,5 @@
 [package]
-name = "bitcoin"
+name = "coordinate"
 version = "0.32.6"
 authors = ["Andrew Poelstra <apoelstra@wpsoftware.net>"]
 license = "CC0-1.0"
