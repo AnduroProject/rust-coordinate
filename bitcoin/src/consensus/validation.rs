@@ -100,7 +100,7 @@ where
                 flags,
             )?;
         } else {
-            return Err(TxVerifyError::UnknownSpentOutput(input.previous_output));
+            return Err(TxVerifyError::UnknownSpentOutput(input.previous_output.clone()));
         }
     }
     Ok(())
