@@ -1,19 +1,19 @@
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let tx_result: Result<bitcoin::blockdata::transaction::Transaction, _> =
-        bitcoin::consensus::encode::deserialize(data);
+    let tx_result: Result<coordinate::blockdata::transaction::Transaction, _> =
+        coordinate::consensus::encode::deserialize(data);
     match tx_result {
         Err(_) => {}
         Ok(mut tx) => {
-            let ser = bitcoin::consensus::encode::serialize(&tx);
+            let ser = coordinate::consensus::encode::serialize(&tx);
             assert_eq!(&ser[..], data);
             let len = ser.len();
             let calculated_weight = tx.weight().to_wu() as usize;
             for input in &mut tx.input {
-                input.witness = bitcoin::blockdata::witness::Witness::default();
+                input.witness = coordinate::blockdata::witness::Witness::default();
             }
-            let no_witness_len = bitcoin::consensus::encode::serialize(&tx).len();
+            let no_witness_len = coordinate::consensus::encode::serialize(&tx).len();
             // For 0-input transactions, `no_witness_len` will be incorrect because
             // we serialize as segwit even after "stripping the witnesses". We need
             // to drop two bytes (i.e. eight weight). Similarly, calculated_weight is

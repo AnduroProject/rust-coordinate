@@ -1,4 +1,4 @@
-use bitcoin::hashes::{sha512_256, Hash, HashEngine};
+use coordinate::hashes::{sha512_256, Hash, HashEngine};
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {

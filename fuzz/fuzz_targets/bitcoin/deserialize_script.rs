@@ -1,7 +1,7 @@
-use bitcoin::address::Address;
-use bitcoin::blockdata::script;
-use bitcoin::consensus::encode;
-use bitcoin::Network;
+use coordinate::address::Address;
+use coordinate::blockdata::script;
+use coordinate::consensus::encode;
+use coordinate::Network;
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {

@@ -13,7 +13,7 @@ impl fmt::Write for NullWriter {
 
 fn do_test(data: &[u8]) {
     let mut writer = NullWriter;
-    bitcoin::Script::from_bytes(data).fmt_asm(&mut writer).unwrap();
+    coordinate::Script::from_bytes(data).fmt_asm(&mut writer).unwrap();
 }
 
 fn main() {

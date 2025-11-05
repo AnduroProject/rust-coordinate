@@ -1,14 +1,14 @@
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let psbt: Result<bitcoin::psbt::Psbt, _> = bitcoin::psbt::Psbt::deserialize(data);
+    let psbt: Result<coordinate::psbt::Psbt, _> = coordinate::psbt::Psbt::deserialize(data);
     match psbt {
         Err(_) => {}
         Ok(psbt) => {
-            let ser = bitcoin::psbt::Psbt::serialize(&psbt);
-            let deser = bitcoin::psbt::Psbt::deserialize(&ser).unwrap();
+            let ser = coordinate::psbt::Psbt::serialize(&psbt);
+            let deser = coordinate::psbt::Psbt::deserialize(&ser).unwrap();
             // Since the fuzz data could order psbt fields differently, we compare to our deser/ser instead of data
-            assert_eq!(ser, bitcoin::psbt::Psbt::serialize(&deser));
+            assert_eq!(ser, coordinate::psbt::Psbt::serialize(&deser));
         }
     }
 }
