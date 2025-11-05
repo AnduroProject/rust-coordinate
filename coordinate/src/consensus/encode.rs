@@ -27,7 +27,7 @@ use crate::block::ReconciliationInvalidTx;
 use crate::block::SignedBlock;
 use crate::bip158::{FilterHash, FilterHeader};
 use crate::blockdata::block::{self, BlockHash, TxMerkleNode};
-use crate::blockdata::transaction::{Transaction, TxIn, TxOut};
+use crate::blockdata::transaction::{Transaction, TxIn, TxOut, BitcoinTransaction, BitcoinTxIn};
 use crate::consensus::{DecodeError, IterReader};
 #[cfg(feature = "std")]
 use crate::p2p::{
@@ -682,10 +682,12 @@ impl_vec!(FilterHash);
 impl_vec!(FilterHeader);
 impl_vec!(TxMerkleNode);
 impl_vec!(Transaction);
+impl_vec!(BitcoinTransaction);
 impl_vec!(SignedBlock);
 impl_vec!(ReconciliationInvalidTx);
 impl_vec!(TxOut);
 impl_vec!(TxIn);
+impl_vec!(BitcoinTxIn);
 impl_vec!(Vec<u8>);
 impl_vec!(u64);
 impl_vec!(TapLeafHash);
@@ -1190,10 +1192,12 @@ mod tests {
         test_len_is_max_vec::<FilterHash>();
         test_len_is_max_vec::<TxMerkleNode>();
         test_len_is_max_vec::<Transaction>();
+        test_len_is_max_vec::<BitcoinTransaction>();
         test_len_is_max_vec::<SignedBlock>();
         test_len_is_max_vec::<ReconciliationInvalidTx>();
         test_len_is_max_vec::<TxOut>();
         test_len_is_max_vec::<TxIn>();
+        test_len_is_max_vec::<BitcoinTxIn>();
         test_len_is_max_vec::<Vec<u8>>();
         test_len_is_max_vec::<u64>();
         #[cfg(feature = "std")]
