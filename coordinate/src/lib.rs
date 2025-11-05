@@ -131,7 +131,7 @@ pub use crate::{
     blockdata::script::witness_program::{self, WitnessProgram},
     blockdata::script::witness_version::{self, WitnessVersion},
     blockdata::script::{self, Script, ScriptBuf, ScriptHash, WScriptHash},
-    blockdata::transaction::{self, OutPoint, Sequence, Transaction, TxIn, TxOut, Txid, Wtxid},
+    blockdata::transaction::{self, OutPoint, Sequence, Transaction, BitcoinTransaction, BitcoinOutPoint, TxIn, TxOut, Txid, Wtxid},
     blockdata::weight::Weight,
     blockdata::witness::{self, Witness},
     consensus::encode::VarInt,
