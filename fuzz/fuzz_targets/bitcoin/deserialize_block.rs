@@ -1,8 +1,8 @@
 use honggfuzz::fuzz;
 
 fn do_test(data: &[u8]) {
-    let _: Result<bitcoin::blockdata::block::Block, _> =
-        bitcoin::consensus::encode::deserialize(data);
+    let _: Result<coordinate::blockdata::block::Block, _> =
+        coordinate::consensus::encode::deserialize(data);
 }
 
 fn main() {

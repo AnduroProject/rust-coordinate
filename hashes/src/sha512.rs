@@ -3,7 +3,6 @@
 //! SHA512 implementation.
 //!
 
-use core::convert::TryInto;
 use core::ops::Index;
 use core::slice::SliceIndex;
 use core::{cmp, str};
@@ -13,8 +12,7 @@ use crate::{FromSliceError, HashEngine as _};
 crate::internal_macros::hash_type! {
     512,
     false,
-    "Output of the SHA512 hash function.",
-    "crate::util::json_hex_string::len_64"
+    "Output of the SHA512 hash function."
 }
 
 #[cfg(not(hashes_fuzz))]
@@ -77,6 +75,19 @@ impl HashEngine {
             h: [
                 0x22312194fc2bf72c, 0x9f555fa3c84c64c2, 0x2393b86b6f53b151, 0x963877195940eabd,
                 0x96283ee2a88effe3, 0xbe5e1e2553863992, 0x2b0199fc2c85b8aa, 0x0eb72ddc81c52ca2,
+            ],
+            length: 0,
+            buffer: [0; BLOCK_SIZE],
+        }
+    }
+
+    /// Constructs a hash engine suitable for use inside the default `sha384::HashEngine`.
+    #[rustfmt::skip]
+    pub(crate) fn sha384() -> Self {
+        HashEngine {
+            h: [
+                0xcbbb9d5dc1059ed8, 0x629a292a367cd507, 0x9159015a3070dd17, 0x152fecd8f70e5939,
+                0x67332667ffc00b31, 0x8eb44a8768581511, 0xdb0c2e0d64f98fa7, 0x47b5481dbefa4fa4,
             ],
             length: 0,
             buffer: [0; BLOCK_SIZE],
